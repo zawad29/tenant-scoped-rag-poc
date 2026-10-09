@@ -1,0 +1,79 @@
+/* Minimal styling. The PoC's value is in isolation and answer quality, not in
+   pixels; this exists so the pages are legible in a demo. */
+
+:root {
+  --fg: #1c1e21;
+  --muted: #62676d;
+  --line: #dcdfe3;
+  --accent: #14508c;
+  --danger: #a4232b;
+  --surface: #ffffff;
+  --bg: #f6f7f9;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+body.auth { display: grid; place-items: center; min-height: 100vh; }
+
+main, header {
+  background: var(--surface);
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+  max-width: none;
+}
+
+header .who { color: var(--muted); margin-left: auto; }
+
+body.auth main { border: 1px solid var(--line); border-radius: 8px; width: 22rem; }
+body:not(.auth) main { border: 1px solid var(--line); border-top: none; }
+
+h1 { font-size: 1.35rem; margin-top: 0; }
+.muted { color: var(--muted); }
+
+label { display: block; margin: .75rem 0 .25rem; font-weight: 600; }
+
+input[type=email], input[type=password], input[type=text], textarea, select {
+  width: 100%;
+  padding: .5rem .6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  background: #fff;
+}
+
+button {
+  margin-top: 1rem;
+  padding: .55rem 1rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.link {
+  background: none;
+  color: var(--accent);
+  margin: 0;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.alert { color: var(--danger); font-weight: 600; }
+.notice { color: var(--muted); }

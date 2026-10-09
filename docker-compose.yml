@@ -1,0 +1,52 @@
+# Multi-Tenant RAG Chatbot PoC — Docker Compose
+#
+# Only data services run here; the Spring Boot app runs on the host.
+#
+#   docker compose up -d                 # postgres only (default profile)
+#   docker compose --profile qdrant up -d  # add the Qdrant adapter's store
+#
+# Memory budget note (host has 15 GB): postgres ~200 MB, qdrant ~300 MB,
+# the app 1-2 GB, plus up to two ONNX sessions (~150-600 MB each). Do not keep
+# everything hot while running the evaluation harness.
+
+services:
+  postgres:
+    # pgvector 0.8.7 ships iterative HNSW index scans (>= 0.8.0), which the
+    # selective tenant pre-filter depends on to avoid short result sets.
+    image: pgvector/pgvector:0.8.7-pg17
+    container_name: ragpoc-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ragpoc}
+      POSTGRES_USER: ${POSTGRES_USER:-ragpoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragpoc}
+      # Deterministic collation/encoding for reproducible text search.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    ports:
+      # 5433 on the host: this machine runs a native PostgreSQL 16 on 5432, and
+      # the Compose container is the one that must win because it guarantees
+      # pgvector 0.8.7 (iterative HNSW scans). See docs/decisions.md D9.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ragpoc} -d ${POSTGRES_DB:-ragpoc}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ragpoc-qdrant
+    profiles: ["qdrant"]
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrantdata:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  qdrantdata:

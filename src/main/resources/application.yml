@@ -1,0 +1,147 @@
+spring:
+  application:
+    name: rag-poc
+
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5433}/${POSTGRES_DB:ragpoc}
+    username: ${POSTGRES_USER:ragpoc}
+    password: ${POSTGRES_PASSWORD:ragpoc}
+    hikari:
+      maximum-pool-size: 12
+
+  flyway:
+    enabled: true
+    # Relational migrations in V1..V9; vector migrations in the V1xx range, in a
+    # location mounted only when the pgvector adapter is active (see
+    # docs/decisions.md D10).
+    locations: classpath:db/migration,classpath:db/vector/pgvector
+    placeholders:
+      # Baked into the vector column's declared dimension. Changing the
+      # embedding model requires a re-index migration, not a config edit.
+      vectorDimension: ${rag.embedding.dimension}
+
+  threads:
+    virtual:
+      enabled: true
+
+  servlet:
+    multipart:
+      # Ingestion validates size explicitly too; this is the outer guard.
+      max-file-size: 50MB
+      max-request-size: 55MB
+      # Required by MultipartConfig: reuse the multipart request that
+      # MultipartFilter already parsed, instead of trying to re-read a consumed
+      # stream. Without this, uploads fail with an empty or missing file.
+      resolve-lazily: true
+
+  # ---------------------------------------------------------------------------
+  # LLM: DeepSeek through its Anthropic-compatible endpoint.
+  #
+  # The key is read from DEEPSEEK_API_KEY, falling back to ANTHROPIC_AUTH_TOKEN
+  # (the variable the local environment already exports). Secrets never live in
+  # this file. See docs/decisions.md D1.
+  # ---------------------------------------------------------------------------
+  ai:
+    anthropic:
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/anthropic}
+      api-key: ${DEEPSEEK_API_KEY:${ANTHROPIC_AUTH_TOKEN:}}
+      timeout: 60s
+      max-retries: 2
+      chat:
+        # deepseek-chat is a non-thinking alias: it returns a single text block
+        # with no reasoning tokens (verified in Step 0). deepseek-flash emits
+        # thinking blocks and costs ~6x the output tokens for the same answer.
+        model: ${DEEPSEEK_MODEL:deepseek-chat}
+        max-tokens: 1024
+        temperature: 0.1
+
+gg:
+  jte:
+    # Development mode compiles templates from src/main/jte on the fly and
+    # watches for changes. The production profile turns this off and uses
+    # precompiled templates instead.
+    development-mode: true
+    template-suffix: .jte
+    use-precompiled-templates: false
+
+# -----------------------------------------------------------------------------
+# Application tuning knobs.
+#
+# Every value the specification calls a "tunable starting point" lives here and
+# is written into the retrieval trace, so an answer can always be explained by
+# the configuration that produced it. Thresholds are calibrated in the
+# evaluation step, not guessed.
+# -----------------------------------------------------------------------------
+rag:
+  embedding:
+    model-id: bge-base-en-v1.5
+    # Plain filesystem paths; no URI scheme and no network access at runtime.
+    model-path: ${RAG_EMBEDDING_MODEL_PATH:models/bge-base-en-v1.5/model.onnx}
+    tokenizer-path: ${RAG_EMBEDDING_TOKENIZER_PATH:models/bge-base-en-v1.5/tokenizer.json}
+    # bge uses CLS pooling; mean pooling silently degrades retrieval (D2).
+    pooling: CLS
+    normalize: true
+    dimension: 768
+    max-sequence-length: 512
+    batch-size: 16
+
+  rerank:
+    # A reranker can be turned off to fall back to pure hybrid retrieval, which
+    # is useful for measuring how much the cross-encoder actually contributes.
+    enabled: true
+    model-id: ms-marco-MiniLM-L-6-v2
+    model-path: ${RAG_RERANK_MODEL_PATH:models/ms-marco-MiniLM-L-6-v2/model.onnx}
+    tokenizer-path: ${RAG_RERANK_TOKENIZER_PATH:models/ms-marco-MiniLM-L-6-v2/tokenizer.json}
+    max-sequence-length: 512
+    batch-size: 16
+
+  vector:
+    # Selects the VectorIndexPort adapter: pgvector (default) or qdrant.
+    provider: ${RAG_VECTOR_PROVIDER:pgvector}
+
+  ingestion:
+    # Outer bounds on what may be uploaded at all; the extractor enforces them
+    # and reports a specific reason for each rejection.
+    max-file-bytes: 52428800
+    max-pages: 500
+    worker-threads: 2
+    max-attempts: 3
+    poll-interval-ms: 1000
+    # Integration tests turn this off and drive the pipeline synchronously, so
+    # they assert on outcomes rather than waiting for a poller.
+    worker-enabled: ${RAG_INGESTION_WORKER_ENABLED:true}
+
+  storage:
+    # Originals are kept on the local filesystem for the PoC (gitignored).
+    local-root: ${RAG_STORAGE_ROOT:data/files}
+
+  chunking:
+    # Capped by bge's 512-token limit: the embedded text is
+    # doc_title + section_title + chunk, so the chunk itself must leave room for
+    # the prefix. See docs/decisions.md D7.
+    target-tokens: 400
+    max-tokens: 480
+    min-tokens: 48
+    overlap-percent: 12
+
+  retrieval:
+    dense-candidates: 30
+    keyword-candidates: 30
+    fused-candidates: 24
+    rerank-top-n: 6
+    rrf-k: 60
+    # Calibrated on the golden set in the evaluation step; the initial values
+    # only exist so the gate has something to compare against.
+    min-relevance: 0.35
+    min-chunk-relevance: 0.15
+    context-token-budget: 6000
+    history-turns-for-rewrite: 5
+
+  guard:
+    max-question-chars: 2000
+    requests-per-minute-per-user: 30
+
+logging:
+  level:
+    com.example.ragpoc: INFO
+    org.springframework.ai: INFO

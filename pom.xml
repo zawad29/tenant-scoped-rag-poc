@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.1</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.example</groupId>
+  <artifactId>rag-poc</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <name>rag-poc</name>
+  <description>Multi-tenant RAG chatbot PoC with strict tenant isolation</description>
+
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <spring-ai.version>2.0.1</spring-ai.version>
+    <jte.version>3.2.4</jte.version>
+    <pdfbox.version>3.0.8</pdfbox.version>
+    <!-- Not managed by the Spring AI BOM: declared explicitly. -->
+    <onnxruntime.version>1.31.0</onnxruntime.version>
+    <!-- Bundles libtokenizers.so for linux-x86_64 in the jar => no runtime download. -->
+    <djl-tokenizers.version>0.32.0</djl-tokenizers.version>
+    <testcontainers.version>2.0.5</testcontainers.version>
+    <archunit.version>1.5.1</archunit.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.ai</groupId>
+        <artifactId>spring-ai-bom</artifactId>
+        <version>${spring-ai.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${testcontainers.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- Web / security / validation -->
+    <!--
+      Boot 4 renamed this starter: spring-boot-starter-web is deprecated in
+      favour of spring-boot-starter-webmvc.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+
+    <!-- Persistence -->
+    <!--
+      Boot 4 modularised autoconfiguration: spring-boot-starter-jdbc plus a bare
+      flyway-core on the classpath is NOT enough. Flyway's autoconfiguration now
+      lives in the separate spring-boot-flyway module, and without it the app
+      starts happily and silently runs no migrations at all. The starter brings
+      spring-boot-jdbc, HikariCP, spring-boot-flyway and flyway-core together.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!--
+      Server-side templates.
+      The "-4-core" artifact is framework agnostic (no Spring MVC view
+      integration); the plain "-4" starter adds the MVC view resolver on top of
+      it. We render HTML through Spring MVC, so we need "-4". It depends on
+      gg.jte:jte, which bundles the template compiler used by
+      gg.jte.development-mode.
+    -->
+    <dependency>
+      <groupId>gg.jte</groupId>
+      <artifactId>jte-spring-boot-starter-4</artifactId>
+      <version>${jte.version}</version>
+    </dependency>
+
+    <!--
+      LLM access only. Spring AI is deliberately NOT used for embeddings or the
+      vector store:
+        * its TransformersEmbeddingModel hard codes MEAN pooling, while bge
+          requires CLS pooling (see docs/decisions.md D2);
+        * its VectorStore abstraction cannot express the mandatory tenant +
+          active-version pre-filter we need.
+    -->
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-starter-model-anthropic</artifactId>
+    </dependency>
+
+    <!-- In-process ONNX inference for embeddings and cross-encoder reranking -->
+    <dependency>
+      <groupId>com.microsoft.onnxruntime</groupId>
+      <artifactId>onnxruntime</artifactId>
+      <version>${onnxruntime.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>ai.djl.huggingface</groupId>
+      <artifactId>tokenizers</artifactId>
+      <version>${djl-tokenizers.version}</version>
+    </dependency>
+
+    <!-- Page-aware PDF text extraction -->
+    <dependency>
+      <groupId>org.apache.pdfbox</groupId>
+      <artifactId>pdfbox</artifactId>
+      <version>${pdfbox.version}</version>
+    </dependency>
+
+    <!-- Test -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Boot 4 split MVC test slicing out of the general test starter:
+      @WebMvcTest and @AutoConfigureMockMvc live in their own module now.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Boot 4 moved TestRestTemplate into its own module. Needed for the
+      real-server test that exercises the multipart upload and CSRF path, which
+      MockMvc cannot represent.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-resttestclient</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- TestRestTemplate builds on RestTemplateBuilder, which also moved. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-restclient</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Without an Apache HttpClient on the classpath, TestRestTemplate's
+      ENABLE_COOKIES option is silently ignored: every request is anonymous.
+      It is silent because redirects are followed, so an unauthenticated GET of
+      a protected page still ends at the login page with a 200.
+    -->
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Testcontainers 2.x dropped the transitive commons-lang3 that 1.x brought
+      in, but still calls BooleanUtils at class-init of its Docker client
+      strategies. Without this the failure is a ServiceConfigurationError that
+      reads like a Docker problem rather than a missing jar.
+    -->
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-lang3</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <version>${archunit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+
+      <!--
+        Unit tests (*Test) run under Surefire in the test phase; integration
+        tests (*IT, meaning Testcontainers and a real database) run under
+        Failsafe in the integration-test phase. `./mvnw verify` runs both, which
+        is the CI gate.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!--
+        Bytecode is always Java 21 (maven.compiler.release). The wider runtime
+        range keeps the box's default JDK 25 usable locally while CI pins 21.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce-java</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <version>[21,26)</version>
+                </requireJavaVersion>
+                <requireMavenVersion>
+                  <version>[3.6.3,)</version>
+                </requireMavenVersion>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!--
+        The gg.jte:jte-maven-plugin (template precompilation) is added in the
+        UI step, together with the first real templates, so that the plugin and
+        the templates are verified as one unit.
+      -->
+    </plugins>
+  </build>
+</project>

@@ -1,0 +1,51 @@
+/* Admin and chat additions on top of the base stylesheet. */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: .5rem;
+}
+
+th, td {
+  text-align: left;
+  padding: .5rem .6rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+th { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+
+.small { font-size: .85rem; }
+.error { color: var(--danger); }
+
+.status {
+  display: inline-block;
+  padding: .1rem .5rem;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 600;
+  background: #eceff3;
+  color: #444;
+}
+
+.status-active { background: #dcefdc; color: #1d5c22; }
+.status-processing, .status-uploaded { background: #fdf0d5; color: #7a5300; }
+.status-failed { background: #fadcdc; color: #96181d; }
+.status-deleting { background: #e4e0f5; color: #453396; }
+
+.actions form { display: inline-flex; gap: .4rem; align-items: center; margin: .2rem 0; }
+.actions input[type=file] { font-size: .8rem; max-width: 13rem; }
+.actions button { margin-top: 0; padding: .3rem .6rem; font-size: .82rem; }
+button.danger { background: var(--danger); }
+
+.upload {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fff;
+  max-width: 34rem;
+}
+
+.upload button { margin-top: 1rem; }
+
+header a { color: var(--accent); }

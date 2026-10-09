@@ -1,0 +1,30 @@
+# Build
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties.bak
+
+# Local model artifacts (fetched by scripts/fetch-models.sh)
+models/
+
+# Secrets / local config
+.env
+*.env.local
+
+# Runtime data
+data/
+logs/
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+
+# JTE runtime-compiled template classes (development mode)
+jte-classes/
