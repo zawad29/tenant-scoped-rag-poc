@@ -8,6 +8,10 @@ Built to [`spec.md`](spec.md). Design decisions, with the evidence behind each
 one, are in [`docs/decisions.md`](docs/decisions.md) — **read that first**; it is
 the map of why things are the way they are.
 
+Resuming work on another machine? Start with [`HANDOFF.md`](HANDOFF.md): it has
+the current status, the step-by-step todo state, what to build next, and the
+list of traps already solved so they are not hit twice.
+
 ---
 
 ## Status
