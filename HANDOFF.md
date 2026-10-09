@@ -4,8 +4,10 @@
 re-deriving context. Read this file first, then `docs/decisions.md` (why things
 are the way they are) and `README.md` (how to run it).
 
-**Last commit:** `2c9c1ee` on `main`, pushed to
-`git@github.com:zawad29/tenant-scoped-rag-poc.git`. Working tree clean.
+**Repo:** `git@github.com:zawad29/tenant-scoped-rag-poc.git`, branch `main`.
+**Added in commit `aeb5e65`; run `git log --oneline -1` for the current tip** —
+this line is deliberately not a frozen commit id, because it would be stale the
+moment this file changed again.
 
 ---
 
