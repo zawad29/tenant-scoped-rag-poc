@@ -1,6 +1,6 @@
 package com.example.ragpoc.config;
 
-import com.example.ragpoc.security.TenantContextArgumentResolver;
+import com.example.ragpoc.security.CidContextArgumentResolver;
 import java.util.List;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
@@ -10,16 +10,16 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-  private final TenantContextArgumentResolver tenantContextArgumentResolver;
+  private final CidContextArgumentResolver cidContextArgumentResolver;
 
-  public WebConfig(TenantContextArgumentResolver tenantContextArgumentResolver) {
-    this.tenantContextArgumentResolver = tenantContextArgumentResolver;
+  public WebConfig(CidContextArgumentResolver cidContextArgumentResolver) {
+    this.cidContextArgumentResolver = cidContextArgumentResolver;
   }
 
   @Override
   public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
-    // Lets controllers declare `TenantContext tenant` as a parameter instead of
-    // looking it up, so the tenant arrives as an explicit argument.
-    resolvers.add(tenantContextArgumentResolver);
+    // Lets controllers declare `CidContext cid` as a parameter instead of
+    // looking it up, so the cid arrives as an explicit argument.
+    resolvers.add(cidContextArgumentResolver);
   }
 }

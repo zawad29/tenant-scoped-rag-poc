@@ -3,7 +3,7 @@
 # Fetch the ONNX models used by the embedding and reranking adapters.
 #
 # Everything lands in ./models (gitignored). The application is then fully
-# offline: adapters are configured with file: URIs only, so there is no
+# offline: services use plain filesystem paths only, so there is no
 # first-call download and no outbound network traffic at runtime.
 #
 # Usage:

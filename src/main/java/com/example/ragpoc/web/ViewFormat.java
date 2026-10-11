@@ -1,6 +1,5 @@
 package com.example.ragpoc.web;
 
-import com.example.ragpoc.document.DocumentStatus;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -18,16 +17,8 @@ public final class ViewFormat {
   }
 
   /** CSS class for a status pill. */
-  public static String statusClass(DocumentStatus status) {
-    return "status status-" + status.name().toLowerCase(java.util.Locale.ROOT);
-  }
-
-  /** Human-readable label for a job state, or a dash when there is no job. */
-  public static String jobLabel(String jobState) {
-    if (jobState == null || jobState.isBlank()) {
-      return "-";
-    }
-    return jobState.charAt(0) + jobState.substring(1).toLowerCase(java.util.Locale.ROOT);
+  public static String statusClass(String status) {
+    return "status status-" + status.toLowerCase(java.util.Locale.ROOT);
   }
 
   /** Formats a chunk count, or a dash when the version has never completed. */
@@ -40,12 +31,27 @@ public final class ViewFormat {
     return currentVersion == 0 ? "-" : String.valueOf(currentVersion);
   }
 
-  /**
-   * Renders an identifier for a URL.
-   *
-   * <p>JTE writes only Strings, so a {@link java.util.UUID} has to be converted
-   * here rather than relied on to be coerced.
-   */
+  /** Formats a raw score to three decimals. */
+  public static String score(double value) {
+    return String.format(java.util.Locale.ROOT, "%.3f", value);
+  }
+
+  /** Formats a nullable raw score, or a dash when there is none. */
+  public static String score(Double value) {
+    return value == null ? "-" : score(value.doubleValue());
+  }
+
+  /** Formats a relevance in (0, 1) for display. */
+  public static String relevance(double value) {
+    return String.format(java.util.Locale.ROOT, "%.2f", value);
+  }
+
+  /** Page range as shown in a citation, e.g. {@code "12"} or {@code "12-14"}. */
+  public static String pageRange(int start, int end) {
+    return start == end ? String.valueOf(start) : start + "-" + end;
+  }
+
+  /** Renders an identifier for a URL; JTE writes only Strings. */
   public static String id(java.util.UUID value) {
     return value == null ? "" : value.toString();
   }

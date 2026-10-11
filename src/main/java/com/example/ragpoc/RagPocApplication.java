@@ -4,11 +4,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * Multi-tenant RAG chatbot PoC.
+ * CID-scoped RAG chatbot PoC.
  *
- * <p>Architectural rule enforced by {@code ArchitectureTest}: all knowledge
- * access flows through a single retrieval choke point that requires a tenant
- * context. See docs/architecture.md.
+ * <p>All knowledge access flows through a single retrieval choke point that
+ * requires a cid context.
  */
 @SpringBootApplication
 public class RagPocApplication {

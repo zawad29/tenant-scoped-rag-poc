@@ -77,3 +77,66 @@ button.link {
 
 .alert { color: var(--danger); font-weight: 600; }
 .notice { color: var(--muted); }
+
+/* --- Retrieval console ---------------------------------------------------- */
+
+main.chat-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 1.5rem;
+  max-width: 72rem;
+}
+
+@media (max-width: 56rem) {
+  main.chat-page { grid-template-columns: minmax(0, 1fr); }
+}
+
+.chat-form textarea { font: inherit; }
+
+.bubble {
+  margin-top: 1rem;
+  padding: .75rem .9rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+.bubble.user { background: #eef3fa; }
+
+.bubble.assistant { background: #fafafa; }
+
+.bubble.disabled { opacity: .65; }
+
+.decision { padding: .5rem .1rem; }
+.decision.ok strong { color: #1c6b3c; }
+.decision.refused strong { color: var(--danger); }
+
+.stats {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: .15rem .75rem;
+  margin: .5rem 0 1rem;
+  font-size: .9rem;
+}
+
+.stats dt { color: var(--muted); }
+.stats dd { margin: 0; }
+
+.source {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .6rem .75rem;
+  margin-bottom: .75rem;
+  background: var(--surface);
+}
+
+.source-head { display: flex; gap: .6rem; align-items: baseline; padding: 0; border: none; }
+
+.source p { margin: .4rem 0; }
+
+table.candidates { width: 100%; border-collapse: collapse; font-size: .85rem; }
+table.candidates th, table.candidates td {
+  text-align: left;
+  padding: .35rem .4rem;
+  border-bottom: 1px solid var(--line);
+}
+table.candidates tr.selected { background: #eef7ef; }

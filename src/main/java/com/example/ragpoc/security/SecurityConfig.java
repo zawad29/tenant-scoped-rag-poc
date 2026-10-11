@@ -13,14 +13,11 @@ import org.springframework.security.web.SecurityFilterChain;
 /**
  * Authentication and route-level authorization.
  *
- * <p>Session-based form login, appropriate for a server-rendered demo. CSRF
- * protection stays on: htmx POSTs send the token, and turning it off would
- * leave every state-changing admin endpoint open to cross-site requests.
+ * <p>Session-based form login. CSRF stays on: htmx POSTs send the token, and
+ * turning it off would leave every state-changing admin endpoint open.
  *
  * <p>Route rules are a coarse first filter only. The real access decision is
- * always the tenant filter inside the query, because authorization here says
- * "this user may upload documents" and never "this user may touch this
- * document" — that depends on the document's tenant, which only the query knows.
+ * always the cid filter inside the query.
  */
 @Configuration
 @EnableWebSecurity
@@ -33,11 +30,8 @@ public class SecurityConfig {
             auth ->
                 auth.requestMatchers("/login", "/css/**", "/js/**", "/favicon.ico", "/actuator/health")
                     .permitAll()
-                    // Document administration is tenant-admin only. Note this
-                    // grants the *capability*, not access to any particular
-                    // document: the tenant filter decides that.
                     .requestMatchers("/admin/**")
-                    .hasRole("TENANT_ADMIN")
+                    .hasRole("CID_ADMIN")
                     .anyRequest()
                     .authenticated())
         .formLogin(
@@ -53,8 +47,6 @@ public class SecurityConfig {
 
   @Bean
   public PasswordEncoder passwordEncoder() {
-    // BCrypt at the default strength: deliberately slow, which is what makes
-    // stored hashes expensive to attack.
     return new BCryptPasswordEncoder();
   }
 }

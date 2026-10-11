@@ -1,7 +1,7 @@
-@param String tenantName
+@param String cidName
 @param String email
 @param String role
-@param boolean isTenantAdmin
+@param boolean isCidAdmin
 @param String csrfParameterName
 @param String csrfToken
 <!DOCTYPE html>
@@ -9,12 +9,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${tenantName}</title>
+  <title>${cidName}</title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
 <header>
-  <strong>${tenantName}</strong>
+  <strong>${cidName}</strong>
   <span class="who">${email} &middot; ${role}</span>
   <form method="post" action="/logout">
     <input type="hidden" name="${csrfParameterName}" value="${csrfToken}">
@@ -26,13 +26,16 @@
   <h1>Document assistant</h1>
   <p class="muted">
     This is your organisation's own workspace. It can only ever answer from
-    documents uploaded by ${tenantName}.
+    documents uploaded by ${cidName}.
   </p>
 
   <nav>
-    @if(isTenantAdmin)
-      <a href="/admin/documents">Manage documents</a>
+    <a href="/chat">Chat &amp; retrieval</a>
+    @if(isCidAdmin)
+      <a href="/admin/documents">Documents</a>
+      <a href="/admin/users">Users</a>
     @endif
+    <a href="/cid/profile">Organisation profile</a>
   </nav>
 </main>
 </body>

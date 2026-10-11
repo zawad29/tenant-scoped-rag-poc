@@ -1,5 +1,12 @@
 # Multi-Tenant RAG Chatbot PoC: Technical Specification (v0.1)
 
+> **Historical document.** This is the original specification. The implementation
+> has since been restructured: the company concept is **cid** (not "tenant"),
+> structured data uses **Spring Data JPA** (not `JdbcClient`), vectors live in
+> **Qdrant** (not pgvector), and retrieval is **dense-only**. See `README.md` and
+> `docs/decisions.md` for the current architecture; the requirements below remain
+> the behavioural intent.
+
 Status: Draft for review. Stack: Java, Spring Boot, Spring AI, JTE, Spring Security, PostgreSQL, Docker Compose.
 
 ## 1. Purpose and scope

@@ -1,6 +1,6 @@
 package com.example.ragpoc.security;
 
-import com.example.ragpoc.tenant.UserRepository;
+import com.example.ragpoc.user.service.UserService;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -10,17 +10,16 @@ import org.springframework.stereotype.Service;
 @Service
 public class AppUserDetailsService implements UserDetailsService {
 
-  private final UserRepository users;
+  private final UserService users;
 
-  public AppUserDetailsService(UserRepository users) {
+  public AppUserDetailsService(UserService users) {
     this.users = users;
   }
 
   @Override
   public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-    // A single generic message for both "no such user" and "wrong password":
-    // distinguishing them would let an attacker enumerate accounts, and account
-    // existence is also a hint about which organisations are enrolled.
+    // One generic message for both "no such user" and "wrong password": account
+    // existence is itself a hint about which companies are enrolled.
     return users
         .findByEmail(email)
         .map(AppUserPrincipal::from)

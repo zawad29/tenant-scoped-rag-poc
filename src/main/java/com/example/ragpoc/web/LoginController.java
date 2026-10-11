@@ -17,9 +17,6 @@ public class LoginController {
       CsrfToken csrfToken,
       Model model) {
 
-    // The CSRF token is passed explicitly rather than by exposing request
-    // attributes to templates: what a template can read should be visible in
-    // the controller.
     model.addAttribute("csrfToken", csrfToken.getToken());
     model.addAttribute("csrfParameterName", csrfToken.getParameterName());
     model.addAttribute("loginFailed", error != null);

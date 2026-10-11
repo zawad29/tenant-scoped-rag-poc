@@ -1,8 +1,8 @@
 package com.example.ragpoc.security;
 
-import com.example.ragpoc.tenant.AppUser;
-import com.example.ragpoc.tenant.Role;
-import com.example.ragpoc.tenant.TenantContext;
+import com.example.ragpoc.cid.CidContext;
+import com.example.ragpoc.user.entity.Role;
+import com.example.ragpoc.user.entity.User;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -11,65 +11,49 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 /**
- * The authenticated principal.
- *
- * <p>Carries {@code tenantId}, which is the only source of the tenant for the
- * whole request. It comes from the database row that the credentials were
- * verified against, so it cannot be influenced by anything the client sends.
- *
- * <p>Deliberately does not carry the password hash beyond what
- * {@link UserDetails} requires, to keep it out of logs and templates.
+ * The authenticated principal. Carries {@code cidId}, the only source of the cid
+ * for the whole request. It comes from the database row the credentials were
+ * verified against, so nothing the client sends can influence it.
  */
 public final class AppUserPrincipal implements UserDetails {
 
   private final UUID userId;
-  private final UUID tenantId;
+  private final UUID cidId;
   private final String email;
   private final String passwordHash;
   private final Role role;
   private final boolean enabled;
 
   private AppUserPrincipal(
-      UUID userId,
-      UUID tenantId,
-      String email,
-      String passwordHash,
-      Role role,
-      boolean enabled) {
+      UUID userId, UUID cidId, String email, String passwordHash, Role role, boolean enabled) {
     this.userId = userId;
-    this.tenantId = tenantId;
+    this.cidId = cidId;
     this.email = email;
     this.passwordHash = passwordHash;
     this.role = role;
     this.enabled = enabled;
   }
 
-  public static AppUserPrincipal from(AppUser user) {
+  public static AppUserPrincipal from(User user) {
     return new AppUserPrincipal(
-        user.id(), user.tenantId(), user.email(), user.passwordHash(), user.role(), user.enabled());
+        user.getId(), user.getCidId(), user.getEmail(), user.getPasswordHash(), user.getRole(), user.isEnabled());
   }
 
   public UUID userId() {
     return userId;
   }
 
-  public UUID tenantId() {
-    return tenantId;
+  public UUID cidId() {
+    return cidId;
   }
 
   public Role role() {
     return role;
   }
 
-  /**
-   * The conversion that starts every tenant-scoped operation.
-   *
-   * <p>Called once per request at the web boundary and then passed explicitly
-   * down the call stack. Nothing about the tenant is ever read again from the
-   * request.
-   */
-  public TenantContext toTenantContext() {
-    return TenantContext.of(tenantId, userId, role);
+  /** The conversion that starts every cid-scoped operation. */
+  public CidContext toCidContext() {
+    return CidContext.of(cidId, userId, role);
   }
 
   @Override
@@ -109,6 +93,6 @@ public final class AppUserPrincipal implements UserDetails {
 
   @Override
   public String toString() {
-    return "AppUserPrincipal[user=" + userId + ", tenant=" + tenantId + ", role=" + role + "]";
+    return "AppUserPrincipal[user=" + userId + ", cid=" + cidId + ", role=" + role + "]";
   }
 }

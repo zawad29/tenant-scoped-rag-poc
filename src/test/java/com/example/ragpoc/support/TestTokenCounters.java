@@ -1,6 +1,6 @@
 package com.example.ragpoc.support;
 
-import com.example.ragpoc.ingest.TokenCounter;
+import com.example.ragpoc.ingestion.chunk.TokenCounter;
 
 /** Token counters for tests that do not need the real tokenizer. */
 public final class TestTokenCounters {

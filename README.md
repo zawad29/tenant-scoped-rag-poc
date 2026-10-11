@@ -1,166 +1,141 @@
-# Tenant-Scoped RAG PoC
+# CID-Scoped RAG PoC
 
-A multi-tenant RAG chatbot where each organisation (tenant) chats with **only its
-own** uploaded PDFs, gets cited answers, and gets a refusal when the documents
-don't support an answer.
+A RAG chatbot where each company (a **cid**) chats only with its own uploaded
+PDFs, gets cited answers, and gets a refusal when the documents don't support an
+answer.
 
-Built to [`spec.md`](spec.md). Design decisions, with the evidence behind each
-one, are in [`docs/decisions.md`](docs/decisions.md) — **read that first**; it is
-the map of why things are the way they are.
+## Stack
 
-Resuming work on another machine? Start with [`HANDOFF.md`](HANDOFF.md): it has
-the current status, the step-by-step todo state, what to build next, and the
-list of traps already solved so they are not hit twice.
+| | |
+| --- | --- |
+| Language | Java 21 |
+| Framework | Spring Boot 4.1.1 (Spring MVC, Spring Security, Spring Data JPA) |
+| Structured data | PostgreSQL 17 (Flyway migrations) |
+| Vectors | Qdrant |
+| Embeddings / reranker | Local ONNX (`bge-base-en-v1.5`, `ms-marco-MiniLM-L-6-v2`) |
+| Views | JTE server-side templates |
+| Boilerplate | Lombok (`@Slf4j` for logging) |
 
----
+## Module layout
 
-## Status
+Packages are organised by module, each with `entity` / `repository` / `service` /
+`controller` where the layer applies.
 
-**Steps 0–8 of the plan are complete.** The core acceptance criterion — that no
-tenant can ever retrieve, see, or be answered from another tenant's content — is
-implemented and covered by a passing test suite.
-
-Working: authentication and tenant resolution · PDF ingestion (validate, extract,
-clean, chunk, embed, index) · a database-backed ingestion queue · document
-admin (upload, replace, delete, with status polling) · hybrid retrieval with RRF
-fusion and ONNX cross-encoder reranking · a relevance gate that refuses without
-calling the model · tenant-checked document download and page rendering ·
-the isolation contract suite.
-
-**Not built yet:** the chat/answer layer (grounded generation with citations,
-SSE streaming, chat UI), the evaluation harness and threshold calibration,
-row-level security, and the second (Qdrant) vector-store adapter. In-memory
-threshold values are starting points, not calibrated ones — see "Known gaps".
-
-156 tests pass: `./mvnw verify`.
-
----
-
-## Prerequisites
-
-- **JDK 21** (bytecode target; JDK 21–25 accepted by the enforcer)
-- **Docker** with Compose
-- Network access **once**, to download the ONNX models
-- A DeepSeek API key for anything that calls the model (ingestion and retrieval
-  run entirely offline)
-
----
+```
+com.example.ragpoc
+├── cid/          Cid entity, repository, service, controller; CidContext
+├── user/         User entity + Role, repository, service, controller
+├── document/     Document + DocumentVersion entities, repositories, services,
+│                 admin/content controllers
+├── ingestion/    Synchronous ingestion pipeline: PDF/text/chunk services
+├── retrieval/    Embedding/reranker services, QdrantVectorStore, RetrievalService,
+│                 guard, gate, context assembler
+├── chat/         Retrieval console controller (no generation yet)
+├── audit/        AuditEvent entity, repository, service
+├── storage/      Local file storage, keyed by cid
+├── security/     Login, principal, cid argument resolver
+├── config/       Properties and bean wiring
+└── web/          Shared view formatting and exception handling
+```
 
 ## Setup
 
 ```bash
-# 1. Download the local ONNX models into ./models (~500 MB, gitignored).
+# 1. Configuration. Optional: the defaults match docker-compose.yml.
+cp .env.example .env
+
+# 2. Local ONNX models (~500 MB, gitignored). Needed for ingestion/retrieval.
 ./scripts/fetch-models.sh
 
-# 2. Start PostgreSQL 17 + pgvector 0.8.7 (host port 5433 — see decisions.md D9).
-docker compose up -d
+# 3. PostgreSQL + Qdrant. Pass the env file explicitly so it does not depend on
+#    Compose's implicit .env lookup.
+docker compose --env-file .env up -d
 
-# 3. Provide the API key. DEEPSEEK_API_KEY is read first, then ANTHROPIC_AUTH_TOKEN.
-export DEEPSEEK_API_KEY=...        # https://api.deepseek.com
+# 4. Run (Spring Boot does not read .env, so export it first).
+set -a; source .env; set +a
+./mvnw spring-boot:run        # :8080
 ```
 
-`JAVA_HOME` matters on a machine whose default JDK is not 21:
+`JAVA_HOME` must point at JDK 21 (JDK 21–25 accepted by the enforcer).
 
-```bash
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-```
+### Environment and Docker notes
 
----
+- `.env` is read by Compose for `${...}` interpolation (ports, credentials). The
+  services also declare `env_file: .env`, so the same values are injected into
+  the containers. To be explicit regardless of the working directory, use
+  `docker compose --env-file .env ...`.
+- The host Postgres port defaults to **5433**, but on a machine where that is
+  taken, set `POSTGRES_PORT` in `.env` (this repo currently uses **5434**).
+  Likewise `QDRANT_GRPC_PORT` (default 6334).
+- **Use one Docker daemon.** If both Docker Desktop (`desktop-linux`) and a system
+  daemon (`default`) are present, do not run this stack under both: they cannot
+  publish the same host ports, and the second `up` fails with
+  `address already in use`. Plain `docker compose` uses the context shown by
+  `docker context show`; keep all `up`/`down` commands on that context (avoid
+  `sudo docker compose` or `--context default` unless you switch consistently).
+
+## Demo accounts
+
+The `V2__demo_data.sql` migration seeds two companies, each with an admin and a
+regular user. All four use the password **`demo1234`**.
+
+| Company | Email | Role |
+| --- | --- | --- |
+| BRAC Bank | `admin@bracbank.test` | `CID_ADMIN` |
+| BRAC Bank | `user@bracbank.test` | `USER` |
+| City Bank | `admin@citybank.test` | `CID_ADMIN` |
+| City Bank | `user@citybank.test` | `USER` |
+
+Sign in at `/login`; a `CID_ADMIN` sees the Documents and Users pages, a `USER`
+sees Chat and Profile. Remove the migration (or move it to a dev-only Flyway
+location) before using this in production.
 
 ## Build and test
 
 ```bash
-./mvnw verify          # everything: unit tests + Testcontainers integration tests
-./mvnw test            # fast: unit tests only, no containers
-./mvnw spring-boot:run # start the app on :8080
+./mvnw test      # unit tests only, no containers, no models
+./mvnw verify    # everything: unit + Testcontainers (Postgres + Qdrant)
 ```
 
-`*Test` classes run under Surefire and need nothing but a JDK. `*IT` classes run
-under Failsafe and need Docker: they start a real PostgreSQL 17 with pgvector.
-**`./mvnw verify` is the gate** — run it before trusting a change.
-
-Tests that need the ONNX models are skipped with an explicit assumption if
+Tests that need the local ONNX models are skipped with an explicit assumption if
 `scripts/fetch-models.sh` has not been run, so a fresh clone still builds.
 
----
+## How isolation is enforced
 
-## Configuration
+1. **The cid comes from the principal**, never from a request body, query string,
+   header or model output. It is built once per request from the authenticated
+   user's own database row.
+2. **`QdrantVectorStore` builds the cid filter itself** from the `CidContext`
+   argument. Callers cannot omit it, and other companies' points are filtered out
+   before ranking.
+3. **Returned chunks are verified** against the caller's cid; a mismatch aborts
+   the request and writes a `SECURITY_CID_MISMATCH` audit event. The query
+   already filters, so this is the independent backstop for a filter bug.
+4. **URL identifiers are resolved with `WHERE id = ? AND cid_id = ?`**, and a miss
+   returns 404 rather than 403, so another company's ids cannot be probed.
 
-Everything tunable lives under `rag.*` in
-[`src/main/resources/application.yml`](src/main/resources/application.yml):
-chunk sizing, candidate counts, and the relevance thresholds. Secrets come from
-the environment only and are never written to a tracked file.
+Ingestion runs synchronously on the upload request, so the cid is passed
+ explicitly to `IngestionService`; there is no ambient thread state to inherit.
 
-The two switches the design was built around:
+## Pages
 
-| Setting | Values | Meaning |
-| --- | --- | --- |
-| `rag.vector.provider` | `pgvector` (default), `qdrant` | which `VectorIndexPort` adapter is active |
-| `rag.rerank.enabled` | `true` (default), `false` | disabling it measures how much the reranker contributes |
-
-Provider-specific classes are only reachable from their adapter, and architecture
-tests fail the build if that stops being true.
-
----
-
-## How tenant isolation is enforced
-
-Five independent layers, so that no single mistake is enough to leak data:
-
-1. **The tenant comes from the principal**, never from a request body, query
-   string, header or model output.
-2. **`VectorIndexPort` has no method without a `TenantContext`**, and the filter
-   is built inside the adapter, so a caller cannot forget it. A reflective test
-   fails the build if an overload without a tenant is ever added.
-3. **Search is a single choke point.** Only `RetrievalService` may call
-   `denseSearch`/`keywordSearch`; an ArchUnit rule enforces it.
-4. **Every returned chunk's tenant is verified** against the caller's. A mismatch
-   aborts the request and writes a `SECURITY_TENANT_MISMATCH` audit event, so a
-   filter bug fails loudly instead of answering from the wrong documents.
-5. **Identifiers from URLs are resolved with `WHERE id = ? AND tenant_id = ?`**,
-   and a miss returns 404 rather than 403, so another tenant's document ids
-   cannot be probed for existence.
-
-There is deliberately **no `ThreadLocal` tenant context in the request path**.
-Background ingestion carries `tenant_id` on the job row and claims work with
-`SELECT ... FOR UPDATE SKIP LOCKED`, so the tenant travels with the work instead
-of being inherited from a thread.
-
-The isolation suite is a contract, not a test class:
-`AbstractTenantIsolationContractTest` holds the assertions and
-`PgVectorIsolationIT` only chooses the storage backend, so a second adapter
-cannot pass a weaker suite than the first.
-
----
+| Route | Purpose |
+| --- | --- |
+| `/` | Home, links to the other pages |
+| `/chat` | Retrieval console: ask a question and see the candidates, ranks and scores. Reply generation is not implemented; the assistant area is a disabled placeholder. |
+| `/admin/documents` | Upload / replace / delete documents and list ingested ones (cid admins) |
+| `/admin/users` | List and create users (cid admins) |
+| `/cid/profile` | Edit the organisation's name, address and email |
+| `/documents/{id}`, `/documents/{id}/pages/{n}` | Download the PDF, render a page as PNG |
 
 ## Known gaps
 
-- **No seeded users yet.** Tenant and user setup (spec step 13) is not built, so
-  there is nothing to log in with. The schema and flows are exercised by the
-  integration tests (`./mvnw verify`), which is the reliable path right now.
+- **No seeded data.** Create a cid and user directly (or via the `/admin/users`
+  screen once one admin exists) to log in.
 - **Thresholds are uncalibrated.** `rag.retrieval.min-relevance` and
-  `min-chunk-relevance` are starting values. Spec §11 forbids shipping guessed
-  thresholds, so refusal behaviour is unproven until the evaluation step sweeps
-  them against a golden set.
-- **The chat layer is not built**, so there is no grounded generation, citation
-  validation or SSE streaming yet; retrieval is complete and tested.
-- **Row-level security is not enabled.** It is the planned second database-level
-  layer.
-- **No re-index job.** Changing the embedding model requires it; the adapter
-  refuses to start on a dimension mismatch rather than mixing vector geometry.
-
----
-
-## Measured on a development machine
-
-Useful for sizing, and all measured rather than assumed:
-
-| Operation | Cost |
-| --- | --- |
-| Boot | ~2.6 s |
-| Embedding | ~30 ms per chunk (bge-base-en-v1.5, in-process ONNX, CPU) |
-| Reranking | ~4.8 ms per pair (30 candidates in ~145 ms) |
-| Ingestion, ~50k chunks | ~25 minutes of background work |
-
-Reranking is far cheaper than expected, so if recall is short the candidate pool
-is the thing to widen, not the reranker.
+  `min-chunk-relevance` are starting values.
+- **Dense-only retrieval.** Keyword/hybrid search and RRF were removed during the
+  Qdrant migration; retrieval is embed → dense search → rerank → gate.
+- **Chat replies are not implemented.** `/chat` is a retrieval console that shows
+  what retrieval found; the assistant reply area is a disabled placeholder.
+- **No row-level security** yet; isolation is enforced in the application layer.
