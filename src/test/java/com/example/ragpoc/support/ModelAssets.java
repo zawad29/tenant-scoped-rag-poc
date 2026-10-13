@@ -19,11 +19,11 @@ public final class ModelAssets {
   private ModelAssets() {}
 
   public static Path embeddingModel() {
-    return MODELS_DIR.resolve("bge-base-en-v1.5/model.onnx");
+    return MODELS_DIR.resolve("all-MiniLM-L6-v2/model.onnx");
   }
 
   public static Path embeddingTokenizer() {
-    return MODELS_DIR.resolve("bge-base-en-v1.5/tokenizer.json");
+    return MODELS_DIR.resolve("all-MiniLM-L6-v2/tokenizer.json");
   }
 
   public static Path rerankerModel() {

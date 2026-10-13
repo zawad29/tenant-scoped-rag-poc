@@ -5,92 +5,144 @@ import com.example.ragpoc.ingestion.chunk.DocumentChunker;
 import com.example.ragpoc.ingestion.chunk.HfTokenCounter;
 import com.example.ragpoc.ingestion.chunk.TextCleaner;
 import com.example.ragpoc.ingestion.chunk.TokenCounter;
-import com.example.ragpoc.ingestion.pdf.PdfPageExtractor;
-import com.example.ragpoc.retrieval.onnx.OnnxTextModel;
-import com.example.ragpoc.retrieval.onnx.PoolingMode;
+import com.example.ragpoc.ingestion.tika.TikaTextExtractor;
+import com.example.ragpoc.retrieval.embedding.ContextualEmbeddingModel;
+import com.example.ragpoc.retrieval.onnx.OnnxCrossEncoder;
+import com.example.ragpoc.retrieval.rerank.DenseOnlyReranker;
+import com.example.ragpoc.retrieval.rerank.OnnxReranker;
+import com.example.ragpoc.retrieval.rerank.Reranker;
+import com.example.ragpoc.retrieval.search.CidScopedVectorSearch;
+import com.example.ragpoc.retrieval.search.DocumentIndex;
 import com.example.ragpoc.retrieval.service.ContextAssembler;
-import com.example.ragpoc.retrieval.service.EmbeddingService;
 import com.example.ragpoc.retrieval.service.InputGuard;
-import com.example.ragpoc.retrieval.service.QdrantVectorStore;
-import com.example.ragpoc.retrieval.service.RerankerService;
+import com.example.ragpoc.retrieval.service.RelevanceGate;
 import com.example.ragpoc.retrieval.service.RetrievalService;
-import java.io.IOException;
+import io.qdrant.client.QdrantClient;
+import io.qdrant.client.QdrantGrpcClient;
 import java.nio.file.Path;
-import java.util.Locale;
-import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.transformers.TransformersEmbeddingModel;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.qdrant.QdrantVectorStore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.core.io.FileSystemResource;
 
 /**
- * Wires configuration to the concrete pipeline components. The ONNX models are
- * loaded once at startup and closed on shutdown; loading them lazily would move a
- * 400 MB read into the first user's request.
+ * Wires configuration to the concrete pipeline components.
+ *
+ * <p>Embedding and reranking are behind provider-neutral interfaces
+ * ({@link EmbeddingModel} and {@link Reranker}); this class is the only place
+ * that names the local ONNX implementations, so a hosted service can replace
+ * them without touching the pipeline.
+ *
+ * <p>The heavy ML beans are {@code @Lazy}: the application can start, serve
+ * static pages and accept logins without the ~200 MB of local models, and a
+ * missing model surfaces on the first ingest or question rather than at boot.
  */
 @Configuration
 @EnableConfigurationProperties(RagProperties.class)
 public class AppConfiguration {
 
-  @Bean(destroyMethod = "close")
-  @Lazy
-  public OnnxTextModel embeddingModel(RagProperties properties) throws IOException {
-    RagProperties.Embedding embedding = properties.embedding();
-    return OnnxTextModel.load(
-        Path.of(embedding.modelPath()),
-        Path.of(embedding.tokenizerPath()),
-        embedding.maxSequenceLength(),
-        4);
-  }
+  // --- embedding ------------------------------------------------------------
 
   @Bean(destroyMethod = "close")
   @Lazy
-  @ConditionalOnProperty(name = "rag.rerank.enabled", havingValue = "true", matchIfMissing = true)
-  public OnnxTextModel rerankerModel(RagProperties properties) throws IOException {
-    RagProperties.Rerank rerank = properties.rerank();
-    return OnnxTextModel.load(
-        Path.of(rerank.modelPath()), Path.of(rerank.tokenizerPath()), rerank.maxSequenceLength(), 4);
+  public EmbeddingModel embeddingModel(RagProperties properties) throws Exception {
+    RagProperties.Transformers transformers = properties.embedding().transformers();
+
+    TransformersEmbeddingModel model = new TransformersEmbeddingModel();
+    model.setDisableCaching(true);
+    model.setModelResource(new FileSystemResource(Path.of(transformers.modelPath())));
+    model.setTokenizerResource(new FileSystemResource(Path.of(transformers.tokenizerPath())));
+    model.setModelOutputName(transformers.outputName());
+    model.afterPropertiesSet();
+
+    // The decorator adds the document-context prefix while embedding; it is the
+    // provider-neutral bean the vector store depends on.
+    return new ContextualEmbeddingModel(model);
   }
+
+  // --- vector store ---------------------------------------------------------
+
+  @Bean(destroyMethod = "close")
+  public QdrantClient qdrantClient(RagProperties properties) {
+    RagProperties.Qdrant qdrant = properties.qdrant();
+    QdrantGrpcClient.Builder builder =
+        QdrantGrpcClient.newBuilder(qdrant.host(), qdrant.port(), qdrant.useTls());
+    if (qdrant.apiKey() != null && !qdrant.apiKey().isBlank()) {
+      builder.withApiKey(qdrant.apiKey());
+    }
+    return new QdrantClient(builder.build());
+  }
+
+  @Bean
+  @Lazy
+  public VectorStore vectorStore(
+      QdrantClient qdrantClient, EmbeddingModel embeddingModel, RagProperties properties) {
+    return QdrantVectorStore.builder(qdrantClient, embeddingModel)
+        .collectionName(properties.qdrant().collection())
+        .initializeSchema(true)
+        .build();
+  }
+
+  @Bean
+  @Lazy
+  public DocumentIndex documentIndex(VectorStore vectorStore) {
+    return new DocumentIndex(vectorStore);
+  }
+
+  @Bean
+  @Lazy
+  public CidScopedVectorSearch cidScopedVectorSearch(
+      VectorStore vectorStore, AuditService audit, RagProperties properties) {
+    return new CidScopedVectorSearch(
+        vectorStore, audit, properties.retrieval().denseCandidates());
+  }
+
+  // --- reranking ------------------------------------------------------------
 
   @Bean(destroyMethod = "close")
   @Lazy
-  public TokenCounter tokenCounter(RagProperties properties) throws IOException {
+  @ConditionalOnProperty(name = "rag.rerank.provider", havingValue = "onnx", matchIfMissing = true)
+  public OnnxCrossEncoder crossEncoder(RagProperties properties) throws java.io.IOException {
+    RagProperties.Rerank.Onnx onnx = properties.rerank().onnx();
+    return OnnxCrossEncoder.load(
+        Path.of(onnx.modelPath()), Path.of(onnx.tokenizerPath()), onnx.maxSequenceLength(), 4);
+  }
+
+  @Bean
+  @Lazy
+  @ConditionalOnProperty(name = "rag.rerank.provider", havingValue = "onnx", matchIfMissing = true)
+  public Reranker onnxReranker(OnnxCrossEncoder crossEncoder, RagProperties properties) {
+    RagProperties.Rerank.Onnx onnx = properties.rerank().onnx();
+    return new OnnxReranker(crossEncoder, "ms-marco-MiniLM-L-6-v2", onnx.batchSize());
+  }
+
+  @Bean
+  @Lazy
+  @ConditionalOnProperty(name = "rag.rerank.provider", havingValue = "none")
+  public Reranker denseOnlyReranker() {
+    return new DenseOnlyReranker();
+  }
+
+  // --- ingestion / retrieval ------------------------------------------------
+
+  @Bean(destroyMethod = "close")
+  @Lazy
+  public TokenCounter tokenCounter(RagProperties properties) throws java.io.IOException {
     // The embedding model's tokenizer, so chunk sizes are measured in the unit
     // the embedding context window uses.
-    return new HfTokenCounter(Path.of(properties.embedding().tokenizerPath()));
+    return new HfTokenCounter(Path.of(properties.embedding().transformers().tokenizerPath()));
   }
 
   @Bean
-  @Lazy
-  public EmbeddingService embeddingService(OnnxTextModel embeddingModel, RagProperties properties) {
-    RagProperties.Embedding embedding = properties.embedding();
-    return new EmbeddingService(
-        embeddingModel,
-        embedding.modelId(),
-        parsePoolingMode(embedding.pooling()),
-        embedding.normalize(),
-        embedding.dimension(),
-        embedding.batchSize());
-  }
-
-  @Bean
-  @Lazy
-  @ConditionalOnProperty(name = "rag.rerank.enabled", havingValue = "true", matchIfMissing = true)
-  public RerankerService rerankerService(OnnxTextModel rerankerModel, RagProperties properties) {
-    return new RerankerService(
-        rerankerModel, properties.rerank().modelId(), properties.rerank().batchSize());
-  }
-
-  @Bean(destroyMethod = "close")
-  public QdrantVectorStore qdrantVectorStore(RagProperties properties) {
-    return new QdrantVectorStore(properties.qdrant(), properties.embedding().dimension());
-  }
-
-  @Bean
-  public PdfPageExtractor pdfPageExtractor(RagProperties properties) {
-    return new PdfPageExtractor(
-        properties.ingestion().maxFileBytes(), properties.ingestion().maxPages());
+  public TikaTextExtractor tikaTextExtractor(RagProperties properties) {
+    return new TikaTextExtractor(properties.ingestion().maxFileBytes());
   }
 
   @Bean
@@ -116,48 +168,32 @@ public class AppConfiguration {
   }
 
   @Bean
-  public com.example.ragpoc.retrieval.service.RelevanceGate relevanceGate(RagProperties properties) {
-    return new com.example.ragpoc.retrieval.service.RelevanceGate(
-        properties.retrieval().minRelevance(), properties.retrieval().minChunkRelevance());
+  public RelevanceGate relevanceGate(RagProperties properties) {
+    RagProperties.Rerank.Onnx onnx = properties.rerank().onnx();
+    return new RelevanceGate(onnx.minRelevance(), onnx.minChunkRelevance());
   }
 
   @Bean
   @Lazy
-  public ContextAssembler contextAssembler(TokenCounter tokenCounter, RagProperties properties) {
-    return new ContextAssembler(tokenCounter, properties.retrieval().contextTokenBudget());
+  public ContextAssembler contextAssembler(
+      TokenCounter tokenCounter, Reranker reranker, RagProperties properties) {
+    // The scoring scale travels from whichever reranker is active, so display
+    // relevance is correct for a logit or a normalised provider.
+    return new ContextAssembler(
+        tokenCounter, properties.retrieval().contextTokenBudget(), reranker.scale());
   }
 
   @Bean
   @Lazy
   public RetrievalService retrievalService(
-      EmbeddingService embeddingService,
-      QdrantVectorStore vectorStore,
-      ObjectProvider<RerankerService> rerankerProvider,
+      CidScopedVectorSearch search,
+      Reranker reranker,
       InputGuard inputGuard,
-      com.example.ragpoc.retrieval.service.RelevanceGate relevanceGate,
+      RelevanceGate relevanceGate,
       ContextAssembler contextAssembler,
       AuditService audit,
       RagProperties properties) {
     return new RetrievalService(
-        embeddingService,
-        vectorStore,
-        rerankerProvider.getIfAvailable(),
-        inputGuard,
-        relevanceGate,
-        contextAssembler,
-        audit,
-        properties);
-  }
-
-  private static PoolingMode parsePoolingMode(String configured) {
-    try {
-      return PoolingMode.valueOf(configured.trim().toUpperCase(Locale.ROOT));
-    } catch (IllegalArgumentException | NullPointerException e) {
-      throw new IllegalStateException(
-          "Unrecognised rag.embedding.pooling value '"
-              + configured
-              + "'. Use CLS for bge models and MEAN for sentence-transformers models.",
-          e);
-    }
+        search, reranker, inputGuard, relevanceGate, contextAssembler, audit, properties);
   }
 }

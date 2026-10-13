@@ -3,6 +3,7 @@ package com.example.ragpoc.retrieval.service;
 import com.example.ragpoc.ingestion.chunk.TokenCounter;
 import com.example.ragpoc.retrieval.model.Candidate;
 import com.example.ragpoc.retrieval.model.RetrievedChunk;
+import com.example.ragpoc.retrieval.rerank.ScoringScale;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -20,10 +21,12 @@ public class ContextAssembler {
 
   private final TokenCounter tokenCounter;
   private final int tokenBudget;
+  private final ScoringScale scoringScale;
 
-  public ContextAssembler(TokenCounter tokenCounter, int tokenBudget) {
+  public ContextAssembler(TokenCounter tokenCounter, int tokenBudget, ScoringScale scoringScale) {
     this.tokenCounter = tokenCounter;
     this.tokenBudget = tokenBudget;
+    this.scoringScale = scoringScale;
   }
 
   public record AssemblyResult(List<RetrievedChunk> chunks, List<Dropped> dropped) {}
@@ -61,7 +64,7 @@ public class ContextAssembler {
     return new AssemblyResult(List.copyOf(selected), List.copyOf(dropped));
   }
 
-  private static RetrievedChunk toRetrievedChunk(int index, Candidate candidate) {
+  private RetrievedChunk toRetrievedChunk(int index, Candidate candidate) {
     var hit = candidate.hit();
     return new RetrievedChunk(
         "S" + (index + 1),
@@ -75,7 +78,7 @@ public class ContextAssembler {
         hit.text(),
         hit.score(),
         candidate.rerankScore(),
-        RelevanceGate.asRelevance(candidate.rerankScore()));
+        RelevanceGate.relevanceFor(scoringScale, candidate.rerankScore()));
   }
 
   private static String normaliseForDuplicateCheck(String text) {

@@ -1,5 +1,8 @@
 package com.example.ragpoc.retrieval.service;
 
+import com.example.ragpoc.retrieval.math.VectorMath;
+import com.example.ragpoc.retrieval.rerank.ScoringScale;
+
 /**
  * Decides whether retrieved evidence is good enough to answer from.
  *
@@ -84,7 +87,18 @@ public class RelevanceGate {
 
   /** Maps a raw score to (0, 1) for display only. */
   public static double asRelevance(double rawScore) {
-    return 1.0 / (1.0 + Math.exp(-rawScore));
+    return VectorMath.sigmoid(rawScore);
+  }
+
+  /**
+   * Maps a provider score to a bounded display value. A logit is squashed; a
+   * score that is already normalised is only clamped.
+   */
+  public static double relevanceFor(ScoringScale scale, double score) {
+    if (scale == ScoringScale.LOGIT) {
+      return VectorMath.sigmoid(score);
+    }
+    return Math.max(0.0, Math.min(1.0, score));
   }
 
   public double minRelevance() {

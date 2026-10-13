@@ -5,6 +5,8 @@ target/
 
 # Local model artifacts (fetched by scripts/fetch-models.sh)
 models/
+# Python venv used by the model exporter
+.venv-models/
 
 # Secrets / local config
 .env

@@ -95,7 +95,6 @@
             <header class="source-head">
               <strong>${chunk.sourceId()}</strong>
               <span>${chunk.docTitle()}</span>
-              <span class="muted">p.${ViewFormat.pageRange(chunk.pageStart(), chunk.pageEnd())}</span>
             </header>
             @if(chunk.sectionTitle() != null)
               <div class="muted small">${chunk.sectionTitle()}</div>
@@ -117,7 +116,6 @@
           <th>Dense&nbsp;#</th>
           <th>Rerank&nbsp;#</th>
           <th>Document</th>
-          <th>Pages</th>
           <th>Dense score</th>
           <th>Rerank score</th>
           <th>Used</th>
@@ -131,7 +129,6 @@
               @if(c.rerankRank() != null)${c.rerankRank()}@else-@endif
             </td>
             <td>${c.docTitle()}</td>
-            <td>${ViewFormat.pageRange(c.pageStart(), c.pageEnd())}</td>
             <td>${ViewFormat.score(c.denseScore())}</td>
             <td>${ViewFormat.score(c.rerankScore())}</td>
             <td>

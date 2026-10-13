@@ -9,10 +9,11 @@ answer.
 | | |
 | --- | --- |
 | Language | Java 21 |
-| Framework | Spring Boot 4.1.1 (Spring MVC, Spring Security, Spring Data JPA) |
+| Framework | Spring Boot 4.1.1 (Spring MVC, Spring Security, Spring Data JPA) + Spring AI 2.0.1 |
 | Structured data | PostgreSQL 17 (Flyway migrations) |
-| Vectors | Qdrant |
-| Embeddings / reranker | Local ONNX (`bge-base-en-v1.5`, `ms-marco-MiniLM-L-6-v2`) |
+| Vectors | Qdrant via Spring AI's `QdrantVectorStore` |
+| Embeddings / reranker | Spring AI `TransformersEmbeddingModel` (`all-MiniLM-L6-v2`) + local ONNX cross-encoder (`ms-marco-MiniLM-L-6-v2`) |
+| Document parsing | Apache Tika via Spring AI's `TikaDocumentReader` |
 | Views | JTE server-side templates |
 | Boilerplate | Lombok (`@Slf4j` for logging) |
 
@@ -27,9 +28,14 @@ com.example.ragpoc
 ├── user/         User entity + Role, repository, service, controller
 ├── document/     Document + DocumentVersion entities, repositories, services,
 │                 admin/content controllers
-├── ingestion/    Synchronous ingestion pipeline: PDF/text/chunk services
-├── retrieval/    Embedding/reranker services, QdrantVectorStore, RetrievalService,
-│                 guard, gate, context assembler
+├── ingestion/    Synchronous ingestion: Tika reader, TextCleaner, DocumentChunker
+├── retrieval/    Provider seams and pipeline:
+│                 ├── embedding/  ContextualEmbeddingModel decorator
+│                 ├── rerank/     Reranker port, OnnxReranker, DenseOnlyReranker
+│                 ├── search/     CidScopedVectorSearch, DocumentIndex
+│                 ├── onnx/       Cross-encoder + tensor helpers
+│                 ├── math/       Pure vector helpers
+│                 └── service/    RetrievalService, guard, gate, context assembler
 ├── chat/         Retrieval console controller (no generation yet)
 ├── audit/        AuditEvent entity, repository, service
 ├── storage/      Local file storage, keyed by cid
@@ -44,7 +50,8 @@ com.example.ragpoc
 # 1. Configuration. Optional: the defaults match docker-compose.yml.
 cp .env.example .env
 
-# 2. Local ONNX models (~500 MB, gitignored). Needed for ingestion/retrieval.
+# 2. Local ONNX models (gitignored). Exported with HuggingFace Optimum into a
+#    local venv (.venv-models); needed for ingestion/retrieval.
 ./scripts/fetch-models.sh
 
 # 3. PostgreSQL + Qdrant. Pass the env file explicitly so it does not depend on
@@ -105,9 +112,9 @@ Tests that need the local ONNX models are skipped with an explicit assumption if
 1. **The cid comes from the principal**, never from a request body, query string,
    header or model output. It is built once per request from the authenticated
    user's own database row.
-2. **`QdrantVectorStore` builds the cid filter itself** from the `CidContext`
+2. **`CidScopedVectorSearch` builds the cid filter itself** from the `CidContext`
    argument. Callers cannot omit it, and other companies' points are filtered out
-   before ranking.
+   before ranking by the vector store.
 3. **Returned chunks are verified** against the caller's cid; a mismatch aborts
    the request and writes a `SECURITY_CID_MISMATCH` audit event. The query
    already filters, so this is the independent backstop for a filter bug.
@@ -132,10 +139,12 @@ Ingestion runs synchronously on the upload request, so the cid is passed
 
 - **No seeded data.** Create a cid and user directly (or via the `/admin/users`
   screen once one admin exists) to log in.
-- **Thresholds are uncalibrated.** `rag.retrieval.min-relevance` and
-  `min-chunk-relevance` are starting values.
-- **Dense-only retrieval.** Keyword/hybrid search and RRF were removed during the
-  Qdrant migration; retrieval is embed → dense search → rerank → gate.
+- **Thresholds are uncalibrated.** `rag.rerank.onnx.min-relevance` and
+  `min-chunk-relevance` are starting values, and they are per provider.
+- **Dense-only retrieval.** Keyword/hybrid search and RRF are not implemented;
+  retrieval is guard → dense search → rerank → gate → context.
+- **No page-number citations.** Tika returns one text stream, so citations carry
+  the document and section, not a page range.
 - **Chat replies are not implemented.** `/chat` is a retrieval console that shows
   what retrieval found; the assistant reply area is a disabled placeholder.
 - **No row-level security** yet; isolation is enforced in the application layer.

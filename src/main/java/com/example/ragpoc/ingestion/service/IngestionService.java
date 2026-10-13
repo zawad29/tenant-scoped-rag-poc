@@ -3,6 +3,7 @@ package com.example.ragpoc.ingestion.service;
 import com.example.ragpoc.audit.entity.AuditEvent;
 import com.example.ragpoc.audit.service.AuditService;
 import com.example.ragpoc.cid.CidContext;
+import com.example.ragpoc.config.RagProperties;
 import com.example.ragpoc.document.entity.Document;
 import com.example.ragpoc.document.entity.DocumentVersion;
 import com.example.ragpoc.document.repository.DocumentRepository;
@@ -14,14 +15,15 @@ import com.example.ragpoc.ingestion.chunk.CleanedPage;
 import com.example.ragpoc.ingestion.chunk.DocumentChunker;
 import com.example.ragpoc.ingestion.chunk.RawPage;
 import com.example.ragpoc.ingestion.chunk.TextCleaner;
-import com.example.ragpoc.ingestion.pdf.PdfPageExtractor;
-import com.example.ragpoc.retrieval.model.ChunkRecord;
-import com.example.ragpoc.retrieval.service.EmbeddingService;
-import com.example.ragpoc.retrieval.service.QdrantVectorStore;
+import com.example.ragpoc.ingestion.tika.TikaTextExtractor;
+import com.example.ragpoc.retrieval.search.ChunkMetadata;
+import com.example.ragpoc.retrieval.search.DocumentIndex;
 import com.example.ragpoc.storage.FileStorageService;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -29,53 +31,56 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Turns a stored PDF into searchable chunks, synchronously.
+ * Turns a stored file into searchable chunks, synchronously.
  *
- * <p>Extraction, cleaning, chunking and embedding touch no database rows; the
- * writes are done in one short transaction at the end. Because this runs on the
- * upload request thread, a rejection (a scanned PDF, say) surfaces to the caller
+ * <p>Extraction, cleaning and chunking touch no database rows; the writes are
+ * done in one short transaction at the end. Because this runs on the upload
+ * request thread, a rejection (a scanned file, say) surfaces to the caller
  * immediately rather than through a polled status.
  *
- * <p>{@code @Lazy}: it pulls in the ONNX pipeline, so it is created the first
- * time a document is ingested rather than at context startup.
+ * <p>Chunks are written as Spring AI {@link Document}s, so the vector store
+ * embeds them through the configured {@code EmbeddingModel}. That means a
+ * hosted embedding service needs no change here.
  */
 @Service
 @Lazy
 @Slf4j
 public class IngestionService {
 
-  private final PdfPageExtractor extractor;
+  private final TikaTextExtractor extractor;
   private final TextCleaner cleaner;
   private final DocumentChunker chunker;
-  private final EmbeddingService embedding;
-  private final QdrantVectorStore index;
+  private final DocumentIndex index;
   private final FileStorageService storage;
   private final DocumentRepository documents;
   private final DocumentVersionRepository versions;
   private final AuditService audit;
   private final TransactionTemplate transactions;
+  private final String embeddingModelId;
+  private final int embeddingDimension;
 
   public IngestionService(
-      PdfPageExtractor extractor,
+      TikaTextExtractor extractor,
       TextCleaner cleaner,
       DocumentChunker chunker,
-      EmbeddingService embedding,
-      QdrantVectorStore index,
+      DocumentIndex index,
       FileStorageService storage,
       DocumentRepository documents,
       DocumentVersionRepository versions,
       AuditService audit,
-      TransactionTemplate transactions) {
+      TransactionTemplate transactions,
+      RagProperties properties) {
     this.extractor = extractor;
     this.cleaner = cleaner;
     this.chunker = chunker;
-    this.embedding = embedding;
     this.index = index;
     this.storage = storage;
     this.documents = documents;
     this.versions = versions;
     this.audit = audit;
     this.transactions = transactions;
+    this.embeddingModelId = properties.embedding().modelId();
+    this.embeddingDimension = properties.embedding().dimension();
   }
 
   /**
@@ -123,45 +128,18 @@ public class IngestionService {
           IngestionValidationException.Reason.NO_EXTRACTABLE_TEXT);
     }
 
-    // Embed the contextualised form; the stored text stays clean.
-    List<String> textsToEmbed = new ArrayList<>(chunks.size());
+    List<org.springframework.ai.document.Document> records = new ArrayList<>(chunks.size());
     for (Chunk chunk : chunks) {
-      textsToEmbed.add(contextualise(document.getTitle(), chunk));
-    }
-    List<float[]> vectors = embedding.embedAll(textsToEmbed);
-
-    if (vectors.size() != chunks.size()) {
-      throw new IllegalStateException(
-          "Embedding returned " + vectors.size() + " vectors for " + chunks.size() + " chunks");
+      records.add(toIndexedDocument(cid, document, version.getVersion(), chunk));
     }
 
-    List<ChunkRecord> records = new ArrayList<>(chunks.size());
-    for (int i = 0; i < chunks.size(); i++) {
-      Chunk chunk = chunks.get(i);
-      records.add(
-          new ChunkRecord(
-              ChunkIds.forChunk(cid.cidId(), document.getId(), version.getVersion(), chunk.index()),
-              document.getId(),
-              version.getVersion(),
-              chunk.index(),
-              chunk.pageStart(),
-              chunk.pageEnd(),
-              chunk.sectionTitle(),
-              document.getTitle(),
-              chunk.text(),
-              embedding.modelId(),
-              vectors.get(i)));
-    }
-
-    // Qdrant writes first, as inactive points, then promote. Preferring a brief
-    // both-active window over a gap means a replacement never makes the document
-    // unanswerable.
-    index.upsert(cid, records);
-    index.setActive(cid, document.getId(), version.getVersion(), true);
+    // The store embeds and upserts. Each version's chunk ids are distinct, so a
+    // replacement never collides with the version it supersedes.
+    index.add(records);
 
     transactions.executeWithoutResult(
         status -> {
-          version.recordIngestionResult(embedding.modelId(), embedding.dimension(), records.size());
+          version.recordIngestionResult(embeddingModelId, embeddingDimension, records.size());
           versions.save(version);
           document.activate(version.getVersion(), version.getContentHash(), pages.size());
           documents.save(document);
@@ -171,6 +149,25 @@ public class IngestionService {
     cleanUpSupersededVersions(cid, document.getId(), version.getVersion());
 
     return records.size();
+  }
+
+  private static org.springframework.ai.document.Document toIndexedDocument(
+      CidContext cid, Document document, int version, Chunk chunk) {
+    Map<String, Object> metadata = new LinkedHashMap<>();
+    metadata.put(ChunkMetadata.CID_ID, cid.cidId().toString());
+    metadata.put(ChunkMetadata.DOCUMENT_ID, document.getId().toString());
+    metadata.put(ChunkMetadata.VERSION, version);
+    metadata.put(ChunkMetadata.CHUNK_INDEX, chunk.index());
+    if (chunk.sectionTitle() != null && !chunk.sectionTitle().isBlank()) {
+      metadata.put(ChunkMetadata.SECTION_TITLE, chunk.sectionTitle());
+    }
+    metadata.put(ChunkMetadata.DOC_TITLE, document.getTitle());
+
+    return org.springframework.ai.document.Document.builder()
+        .id(ChunkIds.forChunk(cid.cidId(), document.getId(), version, chunk.index()).toString())
+        .text(chunk.text())
+        .metadata(metadata)
+        .build();
   }
 
   private void cleanUpSupersededVersions(CidContext cid, UUID documentId, int keepVersion) {
@@ -204,22 +201,12 @@ public class IngestionService {
       document.markFailed();
       documents.save(document);
     }
-    audit.record(
-        cid.cidId(), cid.userId(), AuditEvent.Type.INGESTION_FAILED, describe(cause));
+    audit.record(cid.cidId(), cid.userId(), AuditEvent.Type.INGESTION_FAILED, describe(cause));
     log.warn(
         "Ingestion failed for document {} version {}: {}",
         document.getId(),
         version.getVersion(),
         describe(cause));
-  }
-
-  /** The text that actually gets embedded, but never stored or quoted. */
-  static String contextualise(String documentTitle, Chunk chunk) {
-    StringBuilder text = new StringBuilder(documentTitle);
-    if (chunk.sectionTitle() != null && !chunk.sectionTitle().isBlank()) {
-      text.append(". ").append(chunk.sectionTitle());
-    }
-    return text.append(". ").append(chunk.text()).toString();
   }
 
   private static String describe(RuntimeException e) {

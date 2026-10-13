@@ -5,12 +5,13 @@ import com.example.ragpoc.audit.service.AuditService;
 import com.example.ragpoc.cid.CidContext;
 import com.example.ragpoc.config.RagProperties;
 import com.example.ragpoc.retrieval.AssistantMessages;
-import com.example.ragpoc.retrieval.CidMismatchException;
 import com.example.ragpoc.retrieval.model.Candidate;
 import com.example.ragpoc.retrieval.model.RetrievalOutcome;
 import com.example.ragpoc.retrieval.model.RetrievalTrace;
 import com.example.ragpoc.retrieval.model.RetrievedChunk;
 import com.example.ragpoc.retrieval.model.SearchHit;
+import com.example.ragpoc.retrieval.rerank.Reranker;
+import com.example.ragpoc.retrieval.search.CidScopedVectorSearch;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -20,46 +21,48 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * The single point through which knowledge is read.
  *
- * <p>Order: guard, embed, dense search, verify the returned cids, rerank, gate,
+ * <p>Order: guard, dense search (which embeds the question), rerank, gate,
  * assemble. Two properties make this worth being the only entry point:
  *
  * <ol>
- *   <li><b>Cid verification.</b> Every returned chunk's cid is compared against
- *       the caller's; a mismatch aborts the request and writes a security event.
- *       The store already filters; this is the independent second opinion.
+ *   <li><b>Cid verification.</b> {@link CidScopedVectorSearch} filters by cid and
+ *       re-checks the cid on everything it returns; a mismatch aborts the
+ *       request. This class never sees another cid's data.
  *   <li><b>The gate is not the model's decision.</b> When the evidence is too
  *       weak, this class returns the refusal and no model call happens.
  * </ol>
+ *
+ * <p>The reranker is a provider-neutral {@link Reranker}; when it is disabled the
+ * pipeline degrades to dense ordering rather than branching on a {@code null}.
  */
 @Slf4j
 public class RetrievalService {
 
-  private final EmbeddingService embedding;
-  private final QdrantVectorStore index;
-  private final RerankerService reranker; // null when reranking is disabled
+  private final CidScopedVectorSearch search;
+  private final Reranker reranker;
   private final InputGuard inputGuard;
   private final RelevanceGate gate;
   private final ContextAssembler assembler;
   private final AuditService audit;
-  private final RagProperties.Retrieval settings;
+  private final RagProperties.Rerank rerankSettings;
+  private final String embeddingModelId;
 
   public RetrievalService(
-      EmbeddingService embedding,
-      QdrantVectorStore index,
-      RerankerService reranker,
+      CidScopedVectorSearch search,
+      Reranker reranker,
       InputGuard inputGuard,
       RelevanceGate gate,
       ContextAssembler assembler,
       AuditService audit,
       RagProperties properties) {
-    this.embedding = embedding;
-    this.index = index;
+    this.search = search;
     this.reranker = reranker;
     this.inputGuard = inputGuard;
     this.gate = gate;
     this.assembler = assembler;
     this.audit = audit;
-    this.settings = properties.retrieval();
+    this.rerankSettings = properties.rerank();
+    this.embeddingModelId = properties.embedding().modelId();
   }
 
   public RetrievalOutcome retrieve(CidContext cid, String rawQuestion) {
@@ -77,14 +80,12 @@ public class RetrievalService {
 
     String question = guard.question();
 
-    long embedStart = System.nanoTime();
-    float[] queryVector = embedding.embed(question);
-    long embedMillis = elapsed(embedStart);
-
+    // Embedding happens inside the vector store's similarity search, so the
+    // whole stage is timed as one.
     long searchStart = System.nanoTime();
     List<SearchHit> hits;
     try {
-      hits = index.denseSearch(cid, queryVector, settings.denseCandidates(), null);
+      hits = search.search(cid, question);
     } catch (RuntimeException e) {
       log.error("Retrieval failed for cid {}", cid.cidId(), e);
       return RetrievalOutcome.refused(
@@ -92,9 +93,6 @@ public class RetrievalService {
           AssistantMessages.GENERIC_ERROR);
     }
     long searchMillis = elapsed(searchStart);
-
-    // The independent cid check, on the data that actually came back.
-    verifyCid(cid, hits);
 
     if (hits.isEmpty()) {
       return RetrievalOutcome.refused(
@@ -106,7 +104,7 @@ public class RetrievalService {
               List.of(),
               List.of(),
               Double.NEGATIVE_INFINITY,
-              embedMillis,
+              0,
               searchMillis,
               0),
           AssistantMessages.REFUSAL);
@@ -118,7 +116,7 @@ public class RetrievalService {
 
     double[] rerankScores = candidates.stream().mapToDouble(Candidate::rerankScore).toArray();
     RelevanceGate.GateDecision decision =
-        reranker == null ? gate.evaluateWithoutReranker(candidates.size()) : gate.evaluate(rerankScores);
+        reranker.enabled() ? gate.evaluate(rerankScores) : gate.evaluateWithoutReranker(candidates.size());
 
     if (!decision.answer()) {
       return RetrievalOutcome.refused(
@@ -130,14 +128,13 @@ public class RetrievalService {
               candidates,
               List.of(),
               decision.bestScore(),
-              embedMillis,
+              0,
               searchMillis,
               rerankMillis),
           AssistantMessages.REFUSAL);
     }
 
     List<Candidate> ranked = rankForContext(candidates);
-
     ContextAssembler.AssemblyResult assembly = assembler.assemble(ranked);
 
     if (assembly.chunks().isEmpty()) {
@@ -150,7 +147,7 @@ public class RetrievalService {
               candidates,
               List.of(),
               decision.bestScore(),
-              embedMillis,
+              0,
               searchMillis,
               rerankMillis),
           AssistantMessages.REFUSAL);
@@ -166,13 +163,13 @@ public class RetrievalService {
             candidates,
             assembly.chunks(),
             decision.bestScore(),
-            embedMillis,
+            0,
             searchMillis,
             rerankMillis));
   }
 
   private List<Candidate> scoreCandidates(String question, List<SearchHit> hits) {
-    if (reranker == null) {
+    if (!reranker.enabled()) {
       return hits.stream().map(hit -> new Candidate(hit, 0.0)).toList();
     }
     List<String> passages = hits.stream().map(SearchHit::text).toList();
@@ -186,33 +183,18 @@ public class RetrievalService {
   }
 
   private List<Candidate> rankForContext(List<Candidate> candidates) {
-    if (reranker == null) {
+    if (!reranker.enabled()) {
       // No absolute floor exists in degraded mode: order by dense similarity.
       return candidates.stream()
           .sorted(Comparator.comparingDouble((Candidate c) -> c.hit().score()).reversed())
-          .limit(settings.rerankTopN())
+          .limit(rerankSettings.topN())
           .toList();
     }
     return candidates.stream()
         .filter(candidate -> candidate.rerankScore() >= gate.minChunkRelevance())
         .sorted(Comparator.comparingDouble(Candidate::rerankScore).reversed())
-        .limit(settings.rerankTopN())
+        .limit(rerankSettings.topN())
         .toList();
-  }
-
-  /** Asserts that nothing from another cid came back. Deliberately fatal. */
-  private void verifyCid(CidContext cid, List<SearchHit> hits) {
-    for (SearchHit hit : hits) {
-      if (!cid.cidId().equals(hit.cidId())) {
-        audit.record(
-            cid.cidId(),
-            cid.userId(),
-            AuditEvent.Type.SECURITY_CID_MISMATCH,
-            "chunk " + hit.chunkId() + " retrieved for cid " + cid.cidId() + " belongs to cid " + hit.cidId());
-        throw new CidMismatchException(
-            "Retrieved a chunk belonging to another cid; aborting the request");
-      }
-    }
   }
 
   private RetrievalTrace trace(
@@ -234,7 +216,7 @@ public class RetrievalService {
 
     // Rerank rank: position when the candidates are ordered by reranker score.
     Integer[] rerankRanks = null;
-    if (reranker != null) {
+    if (reranker.enabled()) {
       Integer[] order = new Integer[candidates.size()];
       for (int i = 0; i < candidates.size(); i++) {
         order[i] = i;
@@ -260,7 +242,7 @@ public class RetrievalService {
               candidate.hit().pageStart(),
               candidate.hit().pageEnd(),
               candidate.hit().score(),
-              reranker == null ? null : candidate.rerankScore(),
+              reranker.enabled() ? candidate.rerankScore() : null,
               i + 1,
               rerankRanks == null ? null : rerankRanks[i],
               isSelected,
@@ -277,8 +259,8 @@ public class RetrievalService {
         bestRerankScore,
         gate.minRelevance(),
         gate.minChunkRelevance(),
-        embedding.modelId(),
-        reranker == null ? "none" : reranker.modelId(),
+        embeddingModelId,
+        reranker.modelId(),
         embedMillis,
         searchMillis,
         rerankMillis,
@@ -297,8 +279,8 @@ public class RetrievalService {
         Double.NEGATIVE_INFINITY,
         gate.minRelevance(),
         gate.minChunkRelevance(),
-        embedding.modelId(),
-        reranker == null ? "none" : reranker.modelId(),
+        embeddingModelId,
+        reranker.modelId(),
         0,
         0,
         0,

@@ -78,3 +78,73 @@ of indexing, and there is no retry or durable progress across restarts. A
 rejection is reported straight back on the redirect. `IngestionService` is
 `@Lazy` and injected via `ObjectProvider`, so the ONNX pipeline is built only
 when a document is actually ingested, not at context startup.
+
+---
+
+# R11–R16 — Spring AI integration and provider seams
+
+These supersede parts of R4 (hand-written Qdrant store), R6 (dense-only
+pipeline plumbing) and R7 (local embedding). The isolation guarantees are
+unchanged; only the plumbing moved to the framework.
+
+## R11 — Adopt Spring AI for the vector store, document reading and ETL
+
+`spring-ai-qdrant-store` replaces the 281-line hand-written `QdrantVectorStore`;
+`spring-ai-tika-document-reader` replaces `PdfPageExtractor`;
+`spring-ai-transformers` provides the embedding model; `spring-ai-rag` supplies
+the `DocumentPostProcessor` interface. This removes the hand-rolled gRPC/protobuf
+code and the PDF magic-byte/PDFBox plumbing.
+
+The earlier "trim Spring AI" restructure is reversed on purpose: the framework
+now owns protocol and parsing, while the domain policy (cid scoping, chunking,
+the relevance gate, citations) stays ours.
+
+## R12 — Embedding is all-MiniLM-L6-v2 through `TransformersEmbeddingModel`
+
+`TransformersEmbeddingModel` mean-pools with the attention mask and exposes no
+pooling setting, so it must be paired with a model trained for mean pooling.
+`all-MiniLM-L6-v2` (384 dimensions, 256-token window) is that model; the chunk
+sizes were reduced accordingly. This reverses D2, which used bge with CLS
+pooling; bge under `TransformersEmbeddingModel` would be silently mean-pooled and
+degraded.
+
+Consequence: the DJL PyTorch engine (and its native) is now a dependency, because
+DJL performs the mean pooling. The native is pinned in the pom so it is resolved
+by Maven rather than downloaded on first use.
+
+## R13 — Embedding and reranking are provider seams
+
+`EmbeddingModel` (Spring AI's interface) and our own `Reranker` interface are the
+only types the pipeline depends on. `ContextualEmbeddingModel` decorates any
+`EmbeddingModel` with the `doc_title. section_title. text` prefix, so a hosted
+embedding service slots in without losing that behaviour. `RerankingDocumentPostProcessor`
+wraps any `Reranker`. `DenseOnlyReranker` is a real object for the disabled case,
+so nothing branches on `null`.
+
+Reranker thresholds live under the provider block because they are only
+meaningful in that provider's score scale (`ScoringScale.LOGIT` for the local
+cross-encoder, `NORMALIZED` for a hosted API).
+
+## R14 — Reranking stays a local ONNX cross-encoder
+
+Spring AI 2.0.1 has `DocumentPostProcessor` but no released reranking model (the
+`RerankModel` work is still open). The cross-encoder remains our own code behind
+the `Reranker` port. Its internal tensor arithmetic was decomposed into
+`PaddedTokenBatch`, `OnnxTensors` and `RerankScores`, which are unit-tested
+without the ONNX models. Raw logits are returned unchanged, because the gate
+compares them.
+
+## R15 — One live version, no `active` flag
+
+Since data is reset between schema changes and a brief overlap is acceptable, the
+per-point `active` flag is gone. A replacement adds the new version's points and
+then deletes the superseded version's points by filter. At steady state only one
+version is searchable, and the query filter is just the cid.
+
+## R16 — Tika loses page numbers
+
+Tika extracts a single text stream with no page boundaries. The cleaner and
+chunker are unchanged, but run over one "page", so the cross-page boilerplate
+detector is inactive and citations carry the document and section rather than a
+page range. If page citations are needed, swap `TikaDocumentReader` for Spring
+AI's `PagePdfDocumentReader` (PDF only).

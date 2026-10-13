@@ -1,136 +1,179 @@
 #!/usr/bin/env bash
 #
-# Fetch the ONNX models used by the embedding and reranking adapters.
+# Export the tokenizer and model into ONNX for Spring AI's
+# TransformersEmbeddingModel.
 #
-# Everything lands in ./models (gitignored). The application is then fully
-# offline: services use plain filesystem paths only, so there is no
-# first-call download and no outbound network traffic at runtime.
+# Spring AI's prerequisites are:
+#
+#   python3 -m venv venv
+#   source ./venv/bin/activate
+#   pip install --upgrade pip
+#   pip install optimum onnx onnxruntime sentence-transformers
+#   optimum-cli export onnx --model sentence-transformers/all-MiniLM-L6-v2 <out>
+#
+# The exported folder contains tokenizer.json and model.onnx, which is exactly
+# what the embedding model loads. This script wraps that flow for the two models
+# the application needs, and is idempotent: a model that already has model.onnx
+# and tokenizer.json is skipped.
+#
+# Two small additions to the documented commands, both required:
+#   * optimum-onnx is installed, because Optimum 2.x moved `export onnx` into a
+#     separate package. Without it `optimum-cli export onnx` fails with
+#     "unrecognized arguments: onnx".
+#   * the cross-encoder is exported with --task text-classification, because
+#     auto-detection picks `text-ranking`, which the BERT exporter rejects.
 #
 # Usage:
-#   scripts/fetch-models.sh              # default set (embedding + reranker)
+#   scripts/fetch-models.sh              # both models
 #   scripts/fetch-models.sh embedding    # only the embedding model
 #   scripts/fetch-models.sh reranker     # only the reranker
+#   scripts/fetch-models.sh --force      # re-export even if present
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODELS_DIR="${MODELS_DIR:-$ROOT/models}"
-HF_BASE="${HF_BASE:-https://huggingface.co}"
+VENV_DIR="${MODELS_VENV:-$ROOT/.venv-models}"
+PYTHON="${PYTHON:-python3}"
 
-# --- Model definitions -------------------------------------------------------
-#
-# Embedding: BAAI bge-base-en-v1.5, 768 dimensions.
-#   Pooling matters: bge uses CLS pooling (1_Pooling/config.json says
-#   pooling_mode_cls_token=true). Spring AI's TransformersEmbeddingModel hard
-#   codes MEAN pooling, which would silently degrade retrieval, which is why we
-#   run our own ONNX session instead.
-#
-# Reranker: ms-marco-MiniLM-L-6-v2 cross-encoder (~22M params, 91 MB fp32).
-#   Chosen over bge-reranker-base (1.1 GB fp32 / 279 MB int8) for CPU latency;
-#   bge-reranker-base stays a drop-in alternative via config.
-#
-EMBED_REPO="Xenova/bge-base-en-v1.5"
-EMBED_DIR="bge-base-en-v1.5"
-EMBED_FILES=(
-  "onnx/model.onnx"
-  "tokenizer.json"
-  "tokenizer_config.json"
-  "special_tokens_map.json"
-  "config.json"
-)
-
-RERANK_REPO="Xenova/ms-marco-MiniLM-L-6-v2"
+# The application expects these directory names. The embedding is the model from
+# the Spring AI documentation; the reranker is a cross-encoder that emits one
+# relevance logit per query/passage pair.
+EMBED_REPO="sentence-transformers/all-MiniLM-L6-v2"
+EMBED_DIR="all-MiniLM-L6-v2"
+RERANK_REPO="cross-encoder/ms-marco-MiniLM-L-6-v2"
 RERANK_DIR="ms-marco-MiniLM-L-6-v2"
-RERANK_FILES=(
-  "onnx/model.onnx"
-  "tokenizer.json"
-  "tokenizer_config.json"
-  "special_tokens_map.json"
-  "config.json"
-)
 
-# --- Helpers ----------------------------------------------------------------
+FORCE=false
+target="all"
 
-fetch_repo() {
+# --- argument parsing -------------------------------------------------------
+
+for arg in "$@"; do
+  case "$arg" in
+    --force) FORCE=true ;;
+    all | embedding | reranker) target="$arg" ;;
+    *)
+      echo "usage: $0 [all|embedding|reranker] [--force]" >&2
+      exit 2
+      ;;
+  esac
+done
+
+want_embedding=false
+want_reranker=false
+[[ "$target" == "all" || "$target" == "embedding" ]] && want_embedding=true
+[[ "$target" == "all" || "$target" == "reranker" ]] && want_reranker=true
+
+# --- helpers ----------------------------------------------------------------
+
+is_exported() {
+  local dir="$1"
+  [[ -f "$MODELS_DIR/$dir/model.onnx" && -f "$MODELS_DIR/$dir/tokenizer.json" ]]
+}
+
+ensure_venv() {
+  if [[ ! -x "$VENV_DIR/bin/optimum-cli" ]]; then
+    echo "==> python3 -m venv ${VENV_DIR#"$ROOT"/}"
+    "$PYTHON" -m venv "$VENV_DIR"
+  fi
+
+  "$VENV_DIR/bin/pip" install --upgrade pip
+
+  # CPU-only torch: exporting runs on CPU, and the default linux wheel drags in
+  # several gigabytes of CUDA libraries that are never used. Harmless to omit.
+  if ! "$VENV_DIR/bin/python" -c "import torch" >/dev/null 2>&1; then
+    "$VENV_DIR/bin/pip" install --index-url https://download.pytorch.org/whl/cpu torch
+  fi
+
+  echo "==> pip install optimum onnx onnxruntime sentence-transformers"
+  "$VENV_DIR/bin/pip" install --upgrade optimum onnx onnxruntime sentence-transformers
+  # See the header: required for `optimum-cli export onnx` on Optimum 2.x.
+  "$VENV_DIR/bin/pip" install --upgrade optimum-onnx
+}
+
+export_model() {
   local repo="$1" dir="$2"
   shift 2
-  local files=("$@")
   local dest="$MODELS_DIR/$dir"
 
-  echo "==> $repo -> models/$dir"
-  mkdir -p "$dest"
+  if is_exported "$dir" && [[ "$FORCE" != "true" ]]; then
+    echo "==> $repo -> models/$dir [skip: already exported]"
+    return
+  fi
 
-  for f in "${files[@]}"; do
-    local out="$dest/$(basename "$f")"
-    local url="$HF_BASE/$repo/resolve/main/$f"
+  echo "==> optimum-cli export onnx --model $repo${*:+ $*} models/$dir"
+  # optimum-cli writes into a folder it creates.
+  rm -rf "$dest"
+  mkdir -p "$MODELS_DIR"
+  "$VENV_DIR/bin/optimum-cli" export onnx --model "$repo" "$@" "$dest"
 
-    if [[ -s "$out" ]]; then
-      local remote_size
-      remote_size="$(curl -sIL -m 30 "$url" | awk 'BEGIN{IGNORECASE=1} /^content-length:/{v=$2} END{gsub(/\r/,"",v); print v}')"
-      local local_size
-      local_size="$(stat -c%s "$out")"
-      if [[ -n "$remote_size" && "$remote_size" == "$local_size" ]]; then
-        echo "    [skip] $(basename "$f") ($(numfmt --to=iec "$local_size"))"
-        continue
-      fi
-      echo "    [redo] $(basename "$f") size mismatch (local=$local_size remote=${remote_size:-?})"
+  # Some architectures export under a different file name; the application always
+  # loads model.onnx.
+  if [[ ! -f "$dest/model.onnx" ]]; then
+    local found
+    found="$(find "$dest" -maxdepth 1 -name '*.onnx' | head -1)"
+    if [[ -n "$found" ]]; then
+      echo "    [note] renaming $(basename "$found") to model.onnx"
+      mv "$found" "$dest/model.onnx"
     fi
-
-    echo "    [get ] $f"
-    # -C - resumes a partial download; --retry handles flaky links on big blobs.
-    curl -L --fail --retry 5 --retry-delay 3 -C - -m 1800 \
-      -o "$out" "$url" \
-      || { echo "    !! failed: $url" >&2; return 1; }
-    echo "          -> $(numfmt --to=iec "$(stat -c%s "$out")")"
-  done
+  fi
 }
 
 verify() {
-  local path="$1"
-  [[ -s "$path" ]] || { echo "MISSING: $path" >&2; return 1; }
-  echo "ok: ${path#"$ROOT"/} ($(numfmt --to=iec "$(stat -c%s "$path")"))"
+  local dir="$1" status=0
+  for file in model.onnx tokenizer.json; do
+    if [[ -s "$MODELS_DIR/$dir/$file" ]]; then
+      echo "ok: models/$dir/$file ($(numfmt --to=iec "$(stat -c%s "$MODELS_DIR/$dir/$file")"))"
+    else
+      echo "MISSING: models/$dir/$file" >&2
+      status=1
+    fi
+  done
+  return $status
 }
 
-# --- Main -------------------------------------------------------------------
+# --- main -------------------------------------------------------------------
 
-target="${1:-all}"
+needs_export=false
+if [[ "$want_embedding" == true ]] && ! { is_exported "$EMBED_DIR" && [[ "$FORCE" != "true" ]]; }; then
+  needs_export=true
+fi
+if [[ "$want_reranker" == true ]] && ! { is_exported "$RERANK_DIR" && [[ "$FORCE" != "true" ]]; }; then
+  needs_export=true
+fi
 
-mkdir -p "$MODELS_DIR"
+if [[ "$needs_export" == true ]]; then
+  ensure_venv
+fi
 
-case "$target" in
-  all)
-    fetch_repo "$EMBED_REPO" "$EMBED_DIR" "${EMBED_FILES[@]}"
-    fetch_repo "$RERANK_REPO" "$RERANK_DIR" "${RERANK_FILES[@]}"
-    ;;
-  embedding) fetch_repo "$EMBED_REPO" "$EMBED_DIR" "${EMBED_FILES[@]}" ;;
-  reranker)  fetch_repo "$RERANK_REPO" "$RERANK_DIR" "${RERANK_FILES[@]}" ;;
-  *)
-    echo "usage: $0 [all|embedding|reranker]" >&2
-    exit 2
-    ;;
-esac
+status=0
+if [[ "$want_embedding" == true ]]; then
+  # The documented command, verbatim.
+  export_model "$EMBED_REPO" "$EMBED_DIR"
+fi
+if [[ "$want_reranker" == true ]]; then
+  export_model "$RERANK_REPO" "$RERANK_DIR" --task text-classification
+fi
 
 echo
 echo "==> Verification"
-status=0
-if [[ "$target" == "all" || "$target" == "embedding" ]]; then
-  verify "$MODELS_DIR/$EMBED_DIR/model.onnx"  || status=1
-  verify "$MODELS_DIR/$EMBED_DIR/tokenizer.json" || status=1
+if [[ "$want_embedding" == true ]]; then
+  verify "$EMBED_DIR" || status=1
 fi
-if [[ "$target" == "all" || "$target" == "reranker" ]]; then
-  verify "$MODELS_DIR/$RERANK_DIR/model.onnx" || status=1
-  verify "$MODELS_DIR/$RERANK_DIR/tokenizer.json" || status=1
+if [[ "$want_reranker" == true ]]; then
+  verify "$RERANK_DIR" || status=1
 fi
 
 echo
 if [[ $status -eq 0 ]]; then
   echo "Models ready under $MODELS_DIR"
-  echo "Runtime config (application-local.yml or env) uses plain paths:"
-  echo "  rag.embedding.model-path=$MODELS_DIR/$EMBED_DIR/model.onnx"
-  echo "  rag.embedding.tokenizer-path=$MODELS_DIR/$EMBED_DIR/tokenizer.json"
-  echo "  rag.rerank.model-path=$MODELS_DIR/$RERANK_DIR/model.onnx"
-  echo "  rag.rerank.tokenizer-path=$MODELS_DIR/$RERANK_DIR/tokenizer.json"
+  echo "Runtime config (application.yml defaults):"
+  echo "  rag.embedding.transformers.model-path=$MODELS_DIR/$EMBED_DIR/model.onnx"
+  echo "  rag.embedding.transformers.tokenizer-path=$MODELS_DIR/$EMBED_DIR/tokenizer.json"
+  echo "  rag.rerank.onnx.model-path=$MODELS_DIR/$RERANK_DIR/model.onnx"
+  echo "  rag.rerank.onnx.tokenizer-path=$MODELS_DIR/$RERANK_DIR/tokenizer.json"
 else
-  echo "Model fetch incomplete." >&2
+  echo "Model export incomplete." >&2
 fi
 exit $status

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.example.ragpoc.retrieval.model.Candidate;
 import com.example.ragpoc.retrieval.model.RetrievedChunk;
 import com.example.ragpoc.retrieval.model.SearchHit;
+import com.example.ragpoc.retrieval.rerank.ScoringScale;
 import com.example.ragpoc.support.TestTokenCounters;
 import java.util.List;
 import java.util.UUID;
@@ -13,7 +14,8 @@ import org.junit.jupiter.api.Test;
 
 class ContextAssemblerTest {
 
-  private final ContextAssembler assembler = new ContextAssembler(TestTokenCounters.words(), 20);
+  private final ContextAssembler assembler =
+      new ContextAssembler(TestTokenCounters.words(), 20, ScoringScale.LOGIT);
 
   @Test
   @DisplayName("assigns stable source ids in relevance order")

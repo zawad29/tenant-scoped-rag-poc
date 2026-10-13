@@ -10,7 +10,7 @@ import com.example.ragpoc.document.entity.DocumentVersion;
 import com.example.ragpoc.document.repository.DocumentRepository;
 import com.example.ragpoc.document.repository.DocumentVersionRepository;
 import com.example.ragpoc.ingestion.service.IngestionService;
-import com.example.ragpoc.retrieval.service.QdrantVectorStore;
+import com.example.ragpoc.retrieval.search.DocumentIndex;
 import com.example.ragpoc.storage.FileStorageService;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -38,7 +38,7 @@ public class DocumentService {
   private final DocumentVersionRepository versions;
   private final ObjectProvider<IngestionService> ingestion;
   private final FileStorageService storage;
-  private final QdrantVectorStore index;
+  private final DocumentIndex index;
   private final AuditService audit;
 
   public DocumentService(
@@ -46,7 +46,7 @@ public class DocumentService {
       DocumentVersionRepository versions,
       ObjectProvider<IngestionService> ingestion,
       FileStorageService storage,
-      QdrantVectorStore index,
+      DocumentIndex index,
       AuditService audit) {
     this.documents = documents;
     this.versions = versions;
@@ -134,11 +134,6 @@ public class DocumentService {
     }
 
     index.deleteByDocument(cid, documentId);
-    long remaining = index.countByDocument(cid, documentId);
-    if (remaining != 0) {
-      throw new IllegalStateException(
-          "Deletion incomplete for document " + documentId + ": " + remaining + " chunks remain");
-    }
 
     // document_version rows are removed by the FK cascade.
     documents.delete(document);

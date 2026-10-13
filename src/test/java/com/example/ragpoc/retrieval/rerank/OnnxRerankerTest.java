@@ -1,4 +1,4 @@
-package com.example.ragpoc.retrieval.service;
+package com.example.ragpoc.retrieval.rerank;
 
 import static com.example.ragpoc.support.ModelAssets.missingMessage;
 import static com.example.ragpoc.support.ModelAssets.rerankerModel;
@@ -6,7 +6,7 @@ import static com.example.ragpoc.support.ModelAssets.rerankerTokenizer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import com.example.ragpoc.retrieval.onnx.OnnxTextModel;
+import com.example.ragpoc.retrieval.onnx.OnnxCrossEncoder;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterAll;
@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 /**
- * Step 0 verification for the reranking path.
+ * Verification for the cross-encoder reranking path.
  *
  * <p>Two things must hold for the relevance gate to be trustworthy: the
  * cross-encoder must order passages correctly, and it must do so fast enough on
@@ -25,16 +25,16 @@ import org.junit.jupiter.api.TestInstance;
  */
 @Tag("onnx")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class RerankerServiceTest {
+class OnnxRerankerTest {
 
-  private OnnxTextModel model;
-  private RerankerService reranker;
+  private OnnxCrossEncoder model;
+  private OnnxReranker reranker;
 
   @BeforeAll
   void setUp() throws Exception {
     assumeTrue(java.nio.file.Files.isReadable(rerankerModel()), missingMessage());
-    model = OnnxTextModel.load(rerankerModel(), rerankerTokenizer(), 512, 4);
-    reranker = new RerankerService(model, "ms-marco-MiniLM-L-6-v2", 16);
+    model = OnnxCrossEncoder.load(rerankerModel(), rerankerTokenizer(), 512, 4);
+    reranker = new OnnxReranker(model, "ms-marco-MiniLM-L-6-v2", 16);
   }
 
   @AfterAll
@@ -134,5 +134,12 @@ class RerankerServiceTest {
     double[] second = reranker.score(query, passages);
 
     assertThat(first).containsExactly(second);
+  }
+
+  @Test
+  @DisplayName("reports its scale as raw logits")
+  void reportsLogitScale() {
+    assertThat(reranker.enabled()).isTrue();
+    assertThat(reranker.scale()).isEqualTo(ScoringScale.LOGIT);
   }
 }

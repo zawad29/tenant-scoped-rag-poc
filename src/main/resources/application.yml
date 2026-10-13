@@ -51,24 +51,35 @@ gg:
 # -----------------------------------------------------------------------------
 rag:
   embedding:
-    model-id: bge-base-en-v1.5
-    model-path: ${RAG_EMBEDDING_MODEL_PATH:models/bge-base-en-v1.5/model.onnx}
-    tokenizer-path: ${RAG_EMBEDDING_TOKENIZER_PATH:models/bge-base-en-v1.5/tokenizer.json}
-    # bge uses CLS pooling; mean pooling silently degrades retrieval.
-    pooling: CLS
-    normalize: true
-    dimension: 768
-    max-sequence-length: 512
-    batch-size: 16
+    # Provider seam: `transformers` today, a hosted service later.
+    provider: ${RAG_EMBEDDING_PROVIDER:transformers}
+    model-id: all-MiniLM-L6-v2
+    # Changing the dimension requires re-indexing into a fresh collection.
+    dimension: 384
+    transformers:
+      model-path: ${RAG_EMBEDDING_MODEL_PATH:models/all-MiniLM-L6-v2/model.onnx}
+      tokenizer-path: ${RAG_EMBEDDING_TOKENIZER_PATH:models/all-MiniLM-L6-v2/tokenizer.json}
+      # Optimum exports this sentence-transformers repo with a token-level
+      # `token_embeddings` output ([batch, seq, hidden]); Spring AI mean-pools it.
+      output-name: token_embeddings
+      # all-MiniLM-L6-v2 is trained for a 256-token window.
+      max-sequence-length: 256
 
   rerank:
-    # Disabling it falls back to dense ordering without an absolute gate.
-    enabled: true
-    model-id: ms-marco-MiniLM-L-6-v2
-    model-path: ${RAG_RERANK_MODEL_PATH:models/ms-marco-MiniLM-L-6-v2/model.onnx}
-    tokenizer-path: ${RAG_RERANK_TOKENIZER_PATH:models/ms-marco-MiniLM-L-6-v2/tokenizer.json}
-    max-sequence-length: 512
-    batch-size: 16
+    # Provider seam: `onnx` (local cross-encoder) or `none`.
+    provider: ${RAG_RERANK_PROVIDER:onnx}
+    top-n: 6
+    # When a hosted reranker fails, degrade to dense order instead of refusing.
+    fail-open: false
+    onnx:
+      model-path: ${RAG_RERANK_MODEL_PATH:models/ms-marco-MiniLM-L-6-v2/model.onnx}
+      tokenizer-path: ${RAG_RERANK_TOKENIZER_PATH:models/ms-marco-MiniLM-L-6-v2/tokenizer.json}
+      max-sequence-length: 512
+      batch-size: 16
+      # Thresholds are in this provider's own scale (raw logits) and must be
+      # recalibrated when the provider changes. Uncalibrated starting points.
+      min-relevance: 0.35
+      min-chunk-relevance: 0.15
 
   qdrant:
     host: ${QDRANT_HOST:localhost}
@@ -87,21 +98,16 @@ rag:
     local-root: ${RAG_STORAGE_ROOT:data/files}
 
   chunking:
-    # Capped by bge's 512-token limit: the embedded text is
-    # doc_title + section_title + chunk, so the chunk itself must leave room.
-    target-tokens: 400
-    max-tokens: 480
-    min-tokens: 48
+    # Sized for the embedding model's 256-token window: the embedded text is
+    # doc_title + section_title + chunk, so the chunk must leave room.
+    target-tokens: 160
+    max-tokens: 200
+    min-tokens: 32
     overlap-percent: 12
 
   retrieval:
     dense-candidates: 30
-    rerank-top-n: 6
-    # Calibrated on the golden set in the evaluation step; these only exist so
-    # the gate has something to compare against.
-    min-relevance: 0.35
-    min-chunk-relevance: 0.15
-    context-token-budget: 6000
+    context-token-budget: 4000
 
   guard:
     max-question-chars: 2000

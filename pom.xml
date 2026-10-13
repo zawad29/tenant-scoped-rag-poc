@@ -24,23 +24,26 @@
 
     <jte.version>3.2.4</jte.version>
     <pdfbox.version>3.0.8</pdfbox.version>
+    <!-- Spring AI: Qdrant vector store, Tika reader, ONNX transformers embedding. -->
+    <spring-ai.version>2.0.1</spring-ai.version>
     <!-- Not managed by the Spring BOM: declared explicitly. -->
     <onnxruntime.version>1.31.0</onnxruntime.version>
     <!-- Bundles libtokenizers.so for linux-x86_64 in the jar => no runtime download. -->
     <djl-tokenizers.version>0.32.0</djl-tokenizers.version>
-    <qdrant-client.version>1.15.0</qdrant-client.version>
-    <!--
-      The Qdrant client exposes gRPC, protobuf and Guava types through its
-      public API but declares them runtime scope. Declaring them here is the
-      documented workaround; without it the client's own signatures do not
-      compile.
-    -->
-    <grpc.version>1.65.1</grpc.version>
+    <!-- DJL's pytorch-engine resolves the engine; the native is pinned below. -->
+    <pytorch-native.version>2.7.1</pytorch-native.version>
     <testcontainers.version>2.0.5</testcontainers.version>
   </properties>
 
   <dependencyManagement>
     <dependencies>
+      <dependency>
+        <groupId>org.springframework.ai</groupId>
+        <artifactId>spring-ai-bom</artifactId>
+        <version>${spring-ai.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
       <dependency>
         <groupId>org.testcontainers</groupId>
         <artifactId>testcontainers-bom</artifactId>
@@ -96,27 +99,11 @@
       <scope>runtime</scope>
     </dependency>
 
-    <!-- Vector store: Qdrant. Chunks (text + vector + metadata) live here. -->
-    <dependency>
-      <groupId>io.qdrant</groupId>
-      <artifactId>client</artifactId>
-      <version>${qdrant-client.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.grpc</groupId>
-      <artifactId>grpc-protobuf</artifactId>
-      <version>${grpc.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.grpc</groupId>
-      <artifactId>grpc-stub</artifactId>
-      <version>${grpc.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.grpc</groupId>
-      <artifactId>grpc-netty-shaded</artifactId>
-      <version>${grpc.version}</version>
-    </dependency>
+    <!--
+      Vector store: Qdrant. Chunks (text + vector + metadata) live here. The
+      client comes transitively from spring-ai-qdrant-store; pinning it here
+      previously resolved a build that lacked the gRPC types the store uses.
+    -->
 
     <!-- Server-side templates. -->
     <dependency>
@@ -125,7 +112,42 @@
       <version>${jte.version}</version>
     </dependency>
 
-    <!-- In-process ONNX inference for embeddings and cross-encoder reranking -->
+    <!-- Spring AI: the provider-neutral seams for embedding, vector store and ETL. -->
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-model</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-transformers</artifactId>
+    </dependency>
+    <!--
+      Bundles the host's PyTorch CPU native so DJL does not download ~200 MB on
+      the first mean-pooling call. Only the transformers embedding backend needs
+      it; swapping to a hosted embedding service removes the need for this
+      dependency entirely. Pin the classifier to the deployment platform.
+    -->
+    <dependency>
+      <groupId>ai.djl.pytorch</groupId>
+      <artifactId>pytorch-native-cpu</artifactId>
+      <version>${pytorch-native.version}</version>
+      <classifier>linux-x86_64</classifier>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-qdrant-store</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-rag</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-tika-document-reader</artifactId>
+    </dependency>
+
+    <!-- In-process ONNX cross-encoder reranking -->
     <dependency>
       <groupId>com.microsoft.onnxruntime</groupId>
       <artifactId>onnxruntime</artifactId>
