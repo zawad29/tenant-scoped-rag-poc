@@ -14,17 +14,9 @@ public record RetrievedChunk(
     UUID chunkId,
     UUID documentId,
     int version,
-    int pageStart,
-    int pageEnd,
     String sectionTitle,
     String docTitle,
     String text,
     double denseScore,
     double rerankScore,
-    double relevance) {
-
-  /** Page range as shown in a citation. */
-  public String pageRange() {
-    return pageStart == pageEnd ? String.valueOf(pageStart) : pageStart + "-" + pageEnd;
-  }
-}
+    double relevance) {}

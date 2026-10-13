@@ -128,8 +128,6 @@ class ChatControllerIT extends IntegrationTestSupport {
             selectedChunk,
             documentId,
             1,
-            3,
-            3,
             "LEAVE",
             "Employee Handbook",
             "Employees accrue eighteen days of annual leave.",
@@ -139,10 +137,10 @@ class ChatControllerIT extends IntegrationTestSupport {
 
     RetrievalTrace.CandidateTrace selected =
         new RetrievalTrace.CandidateTrace(
-            selectedChunk, documentId, "Employee Handbook", 3, 3, 0.910, 5.420, 1, 1, true, null);
+            selectedChunk, documentId, "Employee Handbook", 0.910, 5.420, 1, 1, true, null);
     RetrievalTrace.CandidateTrace dropped =
         new RetrievalTrace.CandidateTrace(
-            droppedChunk, documentId, "Employee Handbook", 9, 9, 0.420, -1.200, 2, 2, false, "not selected");
+            droppedChunk, documentId, "Employee Handbook", 0.420, -1.200, 2, 2, false, "not selected");
 
     RetrievalTrace trace =
         new RetrievalTrace(

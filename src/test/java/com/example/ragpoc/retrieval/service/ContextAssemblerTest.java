@@ -70,17 +70,16 @@ class ContextAssemblerTest {
   }
 
   @Test
-  @DisplayName("carries page range and section title through for citations")
+  @DisplayName("carries the citation metadata through unchanged")
   void carriesCitationMetadata() {
     SearchHit hit =
         new SearchHit(
-            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 2, 12, 14, "ANNUAL LEAVE",
+            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 2, "ANNUAL LEAVE",
             "Employee Handbook", "Employees accrue eighteen days", 0.9);
 
     var result = assembler.assemble(List.of(new Candidate(hit, 4.0)));
 
     RetrievedChunk chunk = result.chunks().getFirst();
-    assertThat(chunk.pageRange()).isEqualTo("12-14");
     assertThat(chunk.sectionTitle()).isEqualTo("ANNUAL LEAVE");
     assertThat(chunk.docTitle()).isEqualTo("Employee Handbook");
     assertThat(chunk.version()).isEqualTo(2);
@@ -110,6 +109,6 @@ class ContextAssemblerTest {
 
   private static SearchHit hit(UUID chunkId, String text) {
     return new SearchHit(
-        chunkId, UUID.randomUUID(), UUID.randomUUID(), 1, 3, 3, null, "Doc", text, 0.5);
+        chunkId, UUID.randomUUID(), UUID.randomUUID(), 1, null, "Doc", text, 0.5);
   }
 }

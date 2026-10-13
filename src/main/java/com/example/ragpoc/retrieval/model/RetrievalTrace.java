@@ -33,8 +33,6 @@ public record RetrievalTrace(
       UUID chunkId,
       UUID documentId,
       String docTitle,
-      int pageStart,
-      int pageEnd,
       double denseScore,
       Double rerankScore,
       int denseRank,
@@ -48,7 +46,5 @@ public record RetrievalTrace(
       UUID documentId,
       int version,
       String docTitle,
-      String sectionTitle,
-      int pageStart,
-      int pageEnd) {}
+      String sectionTitle) {}
 }

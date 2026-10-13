@@ -159,7 +159,11 @@
       <version>${djl-tokenizers.version}</version>
     </dependency>
 
-    <!-- Page-aware PDF text extraction -->
+    <!--
+      PDF support for Tika's PDF parser, which needs it at runtime. Pinned as a
+      direct dependency on purpose: this version then shadows Tika's transitive
+      one, so the parser and the ingestion tests' PDF fixtures agree.
+    -->
     <dependency>
       <groupId>org.apache.pdfbox</groupId>
       <artifactId>pdfbox</artifactId>

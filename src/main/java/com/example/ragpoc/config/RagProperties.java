@@ -63,7 +63,27 @@ public record RagProperties(
   public record Qdrant(
       String host, int port, String apiKey, String collection, boolean useTls, int timeoutMs) {}
 
-  public record Ingestion(long maxFileBytes, int maxPages) {}
+  /**
+   * Ingestion limits, and Tika's own text formatter.
+   *
+   * <p>There is no page limit: Tika gives one text stream and no page count, so
+   * nothing here can be measured in pages.
+   */
+  public record Ingestion(long maxFileBytes, Formatter formatter) {
+
+    /**
+     * Spring AI's {@code ExtractedTextFormatter}, which trims the extracted text
+     * before we see it.
+     *
+     * <p>Deletions default to zero on purpose: boilerplate removal is the
+     * cleaner's job, and a formatter that removes lines as well would fight it.
+     *
+     * @param leftAlignment strip leading indentation from every line
+     * @param deleteTopLines lines removed from the top of the text
+     * @param deleteBottomLines lines removed from the bottom of the text
+     */
+    public record Formatter(boolean leftAlignment, int deleteTopLines, int deleteBottomLines) {}
+  }
 
   /** Where original files are kept. Local filesystem for the PoC. */
   public record Storage(String localRoot) {}

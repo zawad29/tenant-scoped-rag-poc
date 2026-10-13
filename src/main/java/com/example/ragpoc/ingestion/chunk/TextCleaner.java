@@ -2,26 +2,21 @@ package com.example.ragpoc.ingestion.chunk;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Turns raw PDF page text into paragraph-level blocks.
+ * Turns extracted document text into paragraph-level blocks.
  *
- * <p>PDF extraction is layout, not prose. The text arrives with a hard line
- * break wherever a line ended on the page, a company name or page number on
- * every page, and words hyphenated across lines. Left alone, all three end up
- * inside the embedding text and in quoted citations.
+ * <p>Extraction is layout, not prose. The text arrives with a hard line break
+ * wherever a line ended on the page, a page number at the foot of every page,
+ * and words hyphenated across lines. Left alone, all three end up inside the
+ * embedding text and in quoted citations.
  *
- * <p>Header and footer removal runs first and looks across the whole document,
- * because that is the only way to tell a repeated running head from a genuine
- * one-off line. Reflowing first would destroy the line structure the detection
- * needs.
+ * <p>Tika hands over one text stream with no page boundaries, so there are no
+ * pages to compare lines across: what is left is the per-line work. Standalone
+ * page numbers go, hyphenated words are rejoined, and the lines are grouped into
+ * paragraphs with a conservative heading heuristic.
  */
 public class TextCleaner {
 
@@ -37,58 +32,18 @@ public class TextCleaner {
   private static final Pattern LIST_ITEM =
       Pattern.compile("^(?:[-*•‣▪◦·]|\\(?\\d+[.)]|[a-z][.)])\\s+\\S.*");
 
-  /** How many lines at each page edge may be a running head or foot. */
-  private static final int EDGE_LINES = 3;
-
-  /**
-   * A repeated line must appear on at least this share of pages to be boilerplate.
-   *
-   * <p>Set high on purpose. A running head is on essentially every page, whereas
-   * a section heading or a standard clause can legitimately recur on half of
-   * them. At a 50% threshold, an alternating "ANNUAL LEAVE" heading was being
-   * deleted from the document.
-   */
-  private static final double BOILERPLATE_PAGE_SHARE = 0.8;
-
-  /**
-   * Longest line that can be boilerplate.
-   *
-   * <p>Running heads and footers are short: a company name, a document title, a
-   * page number. A repeated body paragraph is not a header, and stripping one
-   * would delete real content from every page it appears on.
-   */
-  private static final int MAX_BOILERPLATE_LINE_LENGTH = 150;
-
-  private static final int MIN_PAGES_FOR_BOILERPLATE_DETECTION = 3;
-
-  public List<CleanedPage> clean(List<RawPage> pages) {
-    if (pages.isEmpty()) {
+  public List<Block> clean(String text) {
+    if (text == null || text.isBlank()) {
       return List.of();
     }
 
-    Map<Integer, List<String>> linesByPage = new HashMap<>();
-    for (RawPage page : pages) {
-      linesByPage.put(page.pageNumber(), splitLines(page.text()));
-    }
-
-    Set<String> boilerplate = detectBoilerplate(linesByPage);
-
-    List<CleanedPage> cleaned = new ArrayList<>(pages.size());
-    for (RawPage page : pages) {
-      List<String> lines = linesByPage.getOrDefault(page.pageNumber(), List.of());
-      List<String> kept = new ArrayList<>(lines.size());
-      for (String line : lines) {
-        if (boilerplate.contains(normaliseForComparison(line))) {
-          continue;
-        }
-        if (PAGE_NUMBER.matcher(line).matches()) {
-          continue;
-        }
+    List<String> kept = new ArrayList<>();
+    for (String line : splitLines(text)) {
+      if (!PAGE_NUMBER.matcher(line).matches()) {
         kept.add(line);
       }
-      cleaned.add(new CleanedPage(page.pageNumber(), buildBlocks(kept)));
     }
-    return cleaned;
+    return buildBlocks(kept);
   }
 
   // --- line splitting -------------------------------------------------------
@@ -104,62 +59,10 @@ public class TextCleaner {
     return lines;
   }
 
-  // --- boilerplate detection ------------------------------------------------
-
-  /**
-   * Finds lines that repeat near a page edge across the document.
-   *
-   * <p>Only the first and last few lines of a page are considered, so a phrase
-   * that legitimately recurs in the body is not mistaken for a running head.
-   * Documents with too few pages are left alone: with two pages, "repeated" is
-   * not distinguishable from "coincidence".
-   */
-  private Set<String> detectBoilerplate(Map<Integer, List<String>> linesByPage) {
-    Set<String> boilerplate = new LinkedHashSet<>();
-    if (linesByPage.size() < MIN_PAGES_FOR_BOILERPLATE_DETECTION) {
-      return boilerplate;
-    }
-
-    Map<String, Integer> occurrences = new HashMap<>();
-    for (List<String> lines : linesByPage.values()) {
-      Set<String> candidates = new LinkedHashSet<>();
-      for (int i = 0; i < lines.size(); i++) {
-        if (i < EDGE_LINES || i >= lines.size() - EDGE_LINES) {
-          candidates.add(normaliseForComparison(lines.get(i)));
-        }
-      }
-      // Count each page once per distinct line, so a line repeated within one
-      // page does not inflate the score.
-      for (String candidate : candidates) {
-        occurrences.merge(candidate, 1, Integer::sum);
-      }
-    }
-
-    int threshold = (int) Math.ceil(linesByPage.size() * BOILERPLATE_PAGE_SHARE);
-    occurrences.forEach(
-        (line, count) -> {
-          if (count >= threshold
-              && !line.isBlank()
-              && line.length() > 1
-              && line.length() <= MAX_BOILERPLATE_LINE_LENGTH) {
-            boilerplate.add(line);
-          }
-        });
-    return boilerplate;
-  }
-
-  /** Lower-cased, digits masked, whitespace collapsed: a shape, not a value. */
-  static String normaliseForComparison(String line) {
-    return line.toLowerCase(Locale.ROOT)
-        .replaceAll("\\d+", "#")
-        .replaceAll("\\s+", " ")
-        .trim();
-  }
-
   // --- reflow into blocks ---------------------------------------------------
 
-  private List<CleanedPage.Block> buildBlocks(List<String> lines) {
-    List<CleanedPage.Block> blocks = new ArrayList<>();
+  private List<Block> buildBlocks(List<String> lines) {
+    List<Block> blocks = new ArrayList<>();
     StringBuilder paragraph = new StringBuilder();
 
     for (String line : lines) {
@@ -174,7 +77,7 @@ public class TextCleaner {
       }
       if (startsNewBlock && paragraph.length() == 0 && isHeading(line)) {
         // A heading stands alone, so it can later be used as a section title.
-        blocks.add(new CleanedPage.Block(line, true));
+        blocks.add(new Block(line, true));
         continue;
       }
       appendWithDehyphenation(paragraph, line);
@@ -184,10 +87,10 @@ public class TextCleaner {
     return blocks;
   }
 
-  private static void flush(StringBuilder paragraph, List<CleanedPage.Block> blocks) {
+  private static void flush(StringBuilder paragraph, List<Block> blocks) {
     String text = normaliseWhitespace(paragraph.toString());
     if (!text.isEmpty()) {
-      blocks.add(new CleanedPage.Block(text, false));
+      blocks.add(new Block(text, false));
     }
     paragraph.setLength(0);
   }

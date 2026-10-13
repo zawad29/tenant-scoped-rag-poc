@@ -98,12 +98,15 @@ public class Document {
   /**
    * Makes a version answerable. The switch is a single update: chunks are already
    * written, and queries join on the active version, so no chunk row is rewritten.
+   *
+   * <p>{@code pageCount} is left untouched: Tika gives no page boundaries and no
+   * page count, so the column stays null rather than holding a guess. The admin
+   * list renders that as a dash.
    */
-  public void activate(int version, String contentHash, int pageCount) {
+  public void activate(int version, String contentHash) {
     this.status = DocumentStatus.ACTIVE;
     this.currentVersion = version;
     this.contentHash = contentHash;
-    this.pageCount = pageCount;
     this.updatedAt = Instant.now();
   }
 

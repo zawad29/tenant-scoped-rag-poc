@@ -27,7 +27,7 @@ class DocumentChunkerTest {
   @Test
   @DisplayName("no chunk exceeds the maximum token count")
   void respectsMaximumSize() {
-    List<Chunk> chunks = chunker.chunk("Long Policy", List.of(page(1, prose(40, 6))));
+    List<Chunk> chunks = chunker.chunk("Long Policy", List.of(block(prose(40, 6))));
 
     assertThat(chunks).isNotEmpty();
     for (Chunk chunk : chunks) {
@@ -41,7 +41,7 @@ class DocumentChunkerTest {
   @DisplayName("every sentence of the document appears in at least one chunk")
   void coversTheWholeDocument() {
     List<String> sentences = sentences(12, 5);
-    List<Chunk> chunks = chunker.chunk("Coverage", List.of(page(1, String.join(" ", sentences))));
+    List<Chunk> chunks = chunker.chunk("Coverage", List.of(block(String.join(" ", sentences))));
 
     String combined = chunks.stream().map(Chunk::text).collect(Collectors.joining(" "));
     for (String sentence : sentences) {
@@ -56,7 +56,7 @@ class DocumentChunkerTest {
   void neverEndsMidSentence() {
     // Every source sentence ends in a period, so every chunk must too. A chunk
     // ending anywhere else means a sentence was cut in half.
-    List<Chunk> chunks = chunker.chunk("Boundaries", List.of(page(1, prose(30, 6))));
+    List<Chunk> chunks = chunker.chunk("Boundaries", List.of(block(prose(30, 6))));
 
     for (Chunk chunk : chunks) {
       assertThat(chunk.text().trim())
@@ -74,7 +74,7 @@ class DocumentChunkerTest {
     DocumentChunker overlapping =
         new DocumentChunker(TestTokenCounters.words(), 12, 15, 3, 40);
 
-    List<Chunk> chunks = overlapping.chunk("Overlap", List.of(page(1, prose(30, 3))));
+    List<Chunk> chunks = overlapping.chunk("Overlap", List.of(block(prose(30, 3))));
 
     assertThat(chunks).hasSizeGreaterThan(1);
 
@@ -88,31 +88,14 @@ class DocumentChunkerTest {
   }
 
   @Test
-  @DisplayName("carries the page range of the sentences it contains")
-  void carriesPageRanges() {
-    List<CleanedPage> pages =
-        List.of(page(1, "First page sentence about leave."), page(2, "Second page sentence about pay."));
-
-    List<Chunk> chunks = chunker.chunk("Pages", pages);
-
-    assertThat(chunks).isNotEmpty();
-    assertThat(chunks.getFirst().pageStart()).isEqualTo(1);
-    Chunk last = chunks.getLast();
-    assertThat(last.pageEnd()).isEqualTo(2);
-    assertThat(last.pageStart()).isLessThanOrEqualTo(last.pageEnd());
-  }
-
-  @Test
   @DisplayName("sets the section title from the nearest preceding heading")
   void setsSectionTitleFromHeading() {
-    CleanedPage page =
-        new CleanedPage(
-            1,
-            List.of(
-                new CleanedPage.Block("ANNUAL LEAVE", true),
-                new CleanedPage.Block("Employees accrue eighteen days per year.", false)));
+    List<Block> blocks =
+        List.of(
+            new Block("ANNUAL LEAVE", true),
+            new Block("Employees accrue eighteen days per year.", false));
 
-    List<Chunk> chunks = chunker.chunk("Titled", List.of(page));
+    List<Chunk> chunks = chunker.chunk("Titled", blocks);
 
     assertThat(chunks).hasSize(1);
     assertThat(chunks.getFirst().sectionTitle()).isEqualTo("ANNUAL LEAVE");
@@ -121,9 +104,7 @@ class DocumentChunkerTest {
   @Test
   @DisplayName("section title is null when the document has no detectable structure")
   void sectionTitleIsNullWithoutHeadings() {
-    CleanedPage page = new CleanedPage(1, List.of(new CleanedPage.Block("Bare prose.", false)));
-
-    List<Chunk> chunks = chunker.chunk("Untitled", List.of(page));
+    List<Chunk> chunks = chunker.chunk("Untitled", List.of(new Block("Bare prose.", false)));
 
     assertThat(chunks.getFirst().sectionTitle()).isNull();
   }
@@ -136,7 +117,7 @@ class DocumentChunkerTest {
     // model's context window.
     String monster = "word ".repeat(120).trim();
 
-    List<Chunk> chunks = chunker.chunk("Monster", List.of(page(1, monster)));
+    List<Chunk> chunks = chunker.chunk("Monster", List.of(block(monster)));
 
     assertThat(chunks).hasSizeGreaterThan(1);
     for (Chunk chunk : chunks) {
@@ -154,7 +135,7 @@ class DocumentChunkerTest {
   @DisplayName("does not emit a stub chunk when the tail is shorter than the minimum")
   void avoidsStubChunks() {
     // 18 words then 2 more: the tail must be folded in rather than emitted alone.
-    List<Chunk> chunks = chunker.chunk("Tail", List.of(page(1, prose(3, 6))));
+    List<Chunk> chunks = chunker.chunk("Tail", List.of(block(prose(3, 6))));
 
     for (Chunk chunk : chunks) {
       assertThat(words(chunk.text())).isGreaterThanOrEqualTo(MIN);
@@ -164,15 +145,13 @@ class DocumentChunkerTest {
   @Test
   @DisplayName("returns no chunks for a document with no text")
   void returnsNothingForEmptyDocument() {
-    List<CleanedPage> pages = List.of(new CleanedPage(1, List.of()));
-
-    assertThat(chunker.chunk("Empty", pages)).isEmpty();
+    assertThat(chunker.chunk("Empty", List.of())).isEmpty();
   }
 
   @Test
   @DisplayName("indices are contiguous from zero")
   void indicesAreContiguous() {
-    List<Chunk> chunks = chunker.chunk("Indices", List.of(page(1, prose(30, 6))));
+    List<Chunk> chunks = chunker.chunk("Indices", List.of(block(prose(30, 6))));
 
     for (int i = 0; i < chunks.size(); i++) {
       assertThat(chunks.get(i).index()).isEqualTo(i);
@@ -194,8 +173,8 @@ class DocumentChunkerTest {
 
   // --- helpers --------------------------------------------------------------
 
-  private static CleanedPage page(int number, String text) {
-    return new CleanedPage(number, List.of(new CleanedPage.Block(text, false)));
+  private static Block block(String text) {
+    return new Block(text, false);
   }
 
   /** Prose where each sentence has {@code wordsPerSentence} words. */

@@ -11,14 +11,12 @@ public class IngestionValidationException extends RuntimeException {
 
   /** Why a document could not be ingested. */
   public enum Reason {
-    NOT_A_PDF("The file is not a PDF."),
-    ENCRYPTED("The PDF is password-protected and cannot be read."),
+    ENCRYPTED("The document is password-protected and cannot be read."),
     TOO_LARGE("The file exceeds the maximum permitted size."),
-    TOO_MANY_PAGES("The document exceeds the maximum permitted page count."),
-    MALFORMED("The PDF is damaged or could not be parsed."),
+    MALFORMED("The document is damaged or could not be parsed."),
     NO_EXTRACTABLE_TEXT(
         "No extractable text was found. Scanned documents are not supported; "
-            + "upload a PDF that contains a text layer.");
+            + "upload a file that contains a text layer.");
 
     private final String message;
 

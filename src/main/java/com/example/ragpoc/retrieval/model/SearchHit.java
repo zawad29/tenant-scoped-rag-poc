@@ -15,15 +15,7 @@ public record SearchHit(
     UUID cidId,
     UUID documentId,
     int version,
-    int pageStart,
-    int pageEnd,
     String sectionTitle,
     String docTitle,
     String text,
-    double score) {
-
-  /** Page range as shown in a citation, e.g. {@code "12"} or {@code "12-14"}. */
-  public String pageRange() {
-    return pageStart == pageEnd ? String.valueOf(pageStart) : pageStart + "-" + pageEnd;
-  }
-}
+    double score) {}

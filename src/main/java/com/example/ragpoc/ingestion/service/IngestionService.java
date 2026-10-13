@@ -9,11 +9,10 @@ import com.example.ragpoc.document.entity.DocumentVersion;
 import com.example.ragpoc.document.repository.DocumentRepository;
 import com.example.ragpoc.document.repository.DocumentVersionRepository;
 import com.example.ragpoc.ingestion.IngestionValidationException;
+import com.example.ragpoc.ingestion.chunk.Block;
 import com.example.ragpoc.ingestion.chunk.Chunk;
 import com.example.ragpoc.ingestion.chunk.ChunkIds;
-import com.example.ragpoc.ingestion.chunk.CleanedPage;
 import com.example.ragpoc.ingestion.chunk.DocumentChunker;
-import com.example.ragpoc.ingestion.chunk.RawPage;
 import com.example.ragpoc.ingestion.chunk.TextCleaner;
 import com.example.ragpoc.ingestion.tika.TikaTextExtractor;
 import com.example.ragpoc.retrieval.search.ChunkMetadata;
@@ -124,18 +123,17 @@ public class IngestionService {
     Path source = storage.pathOf(cid, version.getStorageKey());
     log.debug("ingest[{}] v{} resolved stored file {}", document.getId(), version.getVersion(), source);
 
-    List<RawPage> pages = extractor.extract(source);
+    String text = extractor.extract(source);
     log.info(
-        "ingest step=extract cid={} document={} version={} pages={}",
-        cid.cidId(), document.getId(), version.getVersion(), pages.size());
+        "ingest step=extract cid={} document={} version={} chars={}",
+        cid.cidId(), document.getId(), version.getVersion(), text.length());
 
-    List<CleanedPage> cleaned = cleaner.clean(pages);
-    long blocks = cleaned.stream().mapToLong(page -> page.blocks().size()).sum();
+    List<Block> blocks = cleaner.clean(text);
     log.info(
         "ingest step=clean cid={} document={} version={} blocks={}",
-        cid.cidId(), document.getId(), version.getVersion(), blocks);
+        cid.cidId(), document.getId(), version.getVersion(), blocks.size());
 
-    List<Chunk> chunks = chunker.chunk(document.getTitle(), cleaned);
+    List<Chunk> chunks = chunker.chunk(document.getTitle(), blocks);
     log.info(
         "ingest step=chunk cid={} document={} version={} chunks={}",
         cid.cidId(), document.getId(), version.getVersion(), chunks.size());
@@ -149,8 +147,8 @@ public class IngestionService {
     for (Chunk chunk : chunks) {
       records.add(toIndexedDocument(cid, document, version.getVersion(), chunk));
       log.debug(
-          "ingest[{}] v{} chunk={} pages={} section={}",
-          document.getId(), version.getVersion(), chunk.index(), chunk.pageRange(), chunk.sectionTitle());
+          "ingest[{}] v{} chunk={} section={}",
+          document.getId(), version.getVersion(), chunk.index(), chunk.sectionTitle());
     }
 
     // The store embeds and upserts. Each version's chunk ids are distinct, so a
@@ -169,7 +167,7 @@ public class IngestionService {
         status -> {
           version.recordIngestionResult(embeddingModelId, embeddingDimension, records.size());
           versions.save(version);
-          document.activate(version.getVersion(), version.getContentHash(), pages.size());
+          document.activate(version.getVersion(), version.getContentHash());
           documents.save(document);
         });
     log.info(

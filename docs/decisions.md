@@ -141,10 +141,22 @@ per-point `active` flag is gone. A replacement adds the new version's points and
 then deletes the superseded version's points by filter. At steady state only one
 version is searchable, and the query filter is just the cid.
 
-## R16 — Tika loses page numbers
+## R16 — No page numbers anywhere
 
-Tika extracts a single text stream with no page boundaries. The cleaner and
-chunker are unchanged, but run over one "page", so the cross-page boilerplate
-detector is inactive and citations carry the document and section rather than a
-page range. If page citations are needed, swap `TikaDocumentReader` for Spring
-AI's `PagePdfDocumentReader` (PDF only).
+Tika extracts a single text stream with no page boundaries and no page count.
+The first pass kept a page number that was always `1`; that is now removed rather
+than carried as a constant. `RawPage` and `CleanedPage` are gone — the seam is
+`String extract(Path)` → `List<Block> clean(String)` → `List<Chunk> chunk(title,
+blocks)` — and `Chunk`, `SearchHit`, `RetrievedChunk` and the retrieval trace
+carry no page range. The rendered-page endpoint
+(`GET /documents/{id}/pages/{n}`) went with them: nothing can produce a page to
+render. `Document.pageCount` stays as a nullable column and is left unset, so the
+admin list shows a dash instead of inventing a count.
+
+The cross-page running header/footer detector was already inactive (it needed at
+least three pages, and there is one), and it is deleted with the page concept
+rather than kept dormant.
+
+If page citations are ever needed, swap `TikaDocumentReader` for Spring AI's
+`PagePdfDocumentReader` (PDF only) and reintroduce the page fields from that
+source of truth — not from a placeholder.

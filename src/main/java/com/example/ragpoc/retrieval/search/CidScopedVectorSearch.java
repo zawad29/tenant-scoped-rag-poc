@@ -100,15 +100,13 @@ public final class CidScopedVectorSearch {
             ? null
             : metadata.get(ChunkMetadata.SECTION_TITLE).toString();
 
-    // Tika has no page boundaries, so every chunk reports page 1.
+    // One text stream from Tika: there is no page boundary to report.
     var hit =
         new SearchHit(
             UUID.fromString(document.getId()),
             UUID.fromString(String.valueOf(metadata.get(ChunkMetadata.CID_ID))),
             UUID.fromString(String.valueOf(metadata.get(ChunkMetadata.DOCUMENT_ID))),
             ((Number) metadata.get(ChunkMetadata.VERSION)).intValue(),
-            1,
-            1,
             sectionTitle,
             String.valueOf(metadata.get(ChunkMetadata.DOC_TITLE)),
             document.getText(),

@@ -86,8 +86,6 @@ public class ContextAssembler {
         hit.chunkId(),
         hit.documentId(),
         hit.version(),
-        hit.pageStart(),
-        hit.pageEnd(),
         hit.sectionTitle(),
         hit.docTitle(),
         hit.text(),

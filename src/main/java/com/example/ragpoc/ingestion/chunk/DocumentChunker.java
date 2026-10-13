@@ -51,8 +51,8 @@ public class DocumentChunker {
    * @param documentTitle kept for diagnostics; it is part of the embedded prefix,
    *     not of the stored chunk text
    */
-  public List<Chunk> chunk(String documentTitle, List<CleanedPage> pages) {
-    List<Piece> pieces = toPieces(pages);
+  public List<Chunk> chunk(String documentTitle, List<Block> blocks) {
+    List<Piece> pieces = toPieces(blocks);
     if (pieces.isEmpty()) {
       return List.of();
     }
@@ -112,35 +112,31 @@ public class DocumentChunker {
 
   private Chunk toChunk(int index, List<Piece> pieces) {
     String text = String.join(" ", pieces.stream().map(Piece::text).toList());
-    int pageStart = pieces.getFirst().page();
-    int pageEnd = pieces.getLast().page();
     String sectionTitle = pieces.getFirst().section();
     if (sectionTitle != null && sectionTitle.equals(text)) {
       // A chunk that is only a heading carries no content to answer from.
       sectionTitle = null;
     }
-    return new Chunk(index, text, pageStart, pageEnd, sectionTitle);
+    return new Chunk(index, text, sectionTitle);
   }
 
   // --- document to pieces ---------------------------------------------------
 
-  private List<Piece> toPieces(List<CleanedPage> pages) {
+  private List<Piece> toPieces(List<Block> blocks) {
     List<Piece> pieces = new ArrayList<>();
     String section = null;
 
-    for (CleanedPage page : pages) {
-      for (CleanedPage.Block block : page.blocks()) {
-        if (block.heading()) {
-          section = block.text();
-        }
-        for (String sentence : SentenceSplitter.split(block.text())) {
-          for (String part : splitToFit(sentence)) {
-            int tokens = tokenCounter.count(part);
-            if (tokens == 0) {
-              continue;
-            }
-            pieces.add(new Piece(part, tokens, page.pageNumber(), section));
+    for (Block block : blocks) {
+      if (block.heading()) {
+        section = block.text();
+      }
+      for (String sentence : SentenceSplitter.split(block.text())) {
+        for (String part : splitToFit(sentence)) {
+          int tokens = tokenCounter.count(part);
+          if (tokens == 0) {
+            continue;
           }
+          pieces.add(new Piece(part, tokens, section));
         }
       }
     }
@@ -190,6 +186,6 @@ public class DocumentChunker {
     return best;
   }
 
-  /** A sentence-sized unit with the metadata needed to place it in the document. */
-  private record Piece(String text, int tokens, int page, String section) {}
+  /** A sentence-sized unit with the section it belongs to. */
+  private record Piece(String text, int tokens, String section) {}
 }

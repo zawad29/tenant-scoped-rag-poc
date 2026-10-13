@@ -21,6 +21,7 @@ import io.qdrant.client.QdrantClient;
 import io.qdrant.client.QdrantGrpcClient;
 import java.nio.file.Path;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.qdrant.QdrantVectorStore;
@@ -140,9 +141,30 @@ public class AppConfiguration {
     return new HfTokenCounter(Path.of(properties.embedding().transformers().tokenizerPath()));
   }
 
+  /**
+   * Tika's text formatter: immutable, so one instance is shared by every ingest.
+   *
+   * <p>Line deletions default to zero and exist as knobs only: stripping running
+   * heads here would fight the cleaner, which sees the text after this point.
+   */
   @Bean
-  public TikaTextExtractor tikaTextExtractor(RagProperties properties) {
-    return new TikaTextExtractor(properties.ingestion().maxFileBytes());
+  public ExtractedTextFormatter extractedTextFormatter(RagProperties properties) {
+    RagProperties.Ingestion.Formatter settings = properties.ingestion().formatter();
+    if (settings.deleteTopLines() < 0 || settings.deleteBottomLines() < 0) {
+      throw new IllegalArgumentException(
+          "rag.ingestion.formatter line deletions must not be negative");
+    }
+    return ExtractedTextFormatter.builder()
+        .withLeftAlignment(settings.leftAlignment())
+        .withNumberOfTopTextLinesToDelete(settings.deleteTopLines())
+        .withNumberOfBottomTextLinesToDelete(settings.deleteBottomLines())
+        .build();
+  }
+
+  @Bean
+  public TikaTextExtractor tikaTextExtractor(
+      RagProperties properties, ExtractedTextFormatter extractedTextFormatter) {
+    return new TikaTextExtractor(properties.ingestion().maxFileBytes(), extractedTextFormatter);
   }
 
   @Bean

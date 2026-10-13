@@ -102,24 +102,34 @@ Rejection criteria (mapped to `IngestionValidationException.Reason`):
 | Parse | Tika throws | `MALFORMED` |
 | Text layer | at least one non-blank character | `NO_EXTRACTABLE_TEXT` |
 
-Tika gives **no page boundaries**, so the document is treated as a single page.
-The `NOT_A_PDF` and `TOO_MANY_PAGES` reasons no longer apply, because format
-detection and page handling are Tika's job.
+Tika gives **no page boundaries and no page count**, so the stream is never
+split and nothing downstream is measured in pages. The `NOT_A_PDF` and
+`TOO_MANY_PAGES` rejection reasons are gone with them: Tika accepts any format it
+can detect, and there is no page count to check.
+
+The `ExtractedTextFormatter` is a **bean**, built once from
+`rag.ingestion.formatter` instead of being rebuilt on every extract. It is
+immutable, so one instance is shared by all ingests; its line deletions default
+to zero so it does not fight the cleaner.
 
 ### 3.3 Clean (`TextCleaner`)
 
-Unchanged. PDF extraction gives layout, not prose, so the cleaner removes running
-headers/footers (a line on ≥ 80% of pages, ≤ 150 chars, first/last 3 lines),
-drops standalone page numbers, repairs hyphenation, and groups lines into
-paragraph blocks with a conservative heading heuristic. Because Tika yields one
-page, the cross-page boilerplate detector is inactive; Tika's
-`ExtractedTextFormatter` is configured to delete **zero** lines so it does not
-fight the cleaner.
+Extraction gives layout, not prose, so the cleaner drops standalone page numbers,
+repairs hyphenation across line breaks, and groups lines into paragraph blocks
+with a conservative heading heuristic. Input is the single extracted stream
+(`List<Block> clean(String text)`), where `Block(text, heading)` is what lets the
+chunker set a section title and prefer a break at a heading.
+
+There is no page concept left to carry, so `RawPage` and `CleanedPage` are gone.
+The cross-page running header/footer detector needed at least three pages and was
+already inactive under Tika; it has been removed rather than kept dormant —
+swapping in Spring AI's `PagePdfDocumentReader` would bring it back with real page
+inputs.
 
 ### 3.4 Chunk (`DocumentChunker`)
 
-Unchanged, but resized for the embedding model. Output: `Chunk(index, text,
-pageStart, pageEnd, sectionTitle)` with the clean display text.
+Output: `Chunk(index, text, sectionTitle)` with the clean display text. There is no
+page range: a citation identifies the document and the section it sits under.
 
 | Knob | Value | Meaning |
 |---|---|---|
@@ -288,6 +298,7 @@ thresholds.
 | Stored/quoted text | clean `chunk_text` only |
 | Chunk size | grow to 160 tokens; hard cap 200; top up to 32; ~12% overlap |
 | Chunk id | UUID v5 of `cid:document:version:index` |
+| Citation | document title + section title; no page range, Tika has none |
 | Searchable | one live version (superseded points deleted after promotion) |
 
 ### Questions (retrieval)
@@ -339,7 +350,9 @@ rag:
                 overlap-percent: 12 }
   retrieval:  { dense-candidates: 30, context-token-budget: 4000 }
   guard:      { max-question-chars: 2000, requests-per-minute-per-user: 30 }
-  ingestion:  { max-file-bytes: 52428800, max-pages: 500 }
+  ingestion:  { max-file-bytes: 52428800,
+                formatter: { left-alignment: false, delete-top-lines: 0,
+                             delete-bottom-lines: 0 } }
   qdrant:     { host: localhost, port: 6334, collection: chunks, use-tls: false }
   storage:    { local-root: data/files }
 ```
@@ -377,7 +390,7 @@ Ingestion:
 ingest start cid=… document=… version=… title="…" storageKey=…
 ingest step=tika-read file=… bytes=…
 ingest step=tika-extracted file=… chars=…
-ingest step=extract … pages=1
+ingest step=extract … chars=…
 ingest step=clean … blocks=…
 ingest step=chunk … chunks=…
 index step=add documents=…

@@ -1,7 +1,6 @@
 package com.example.ragpoc.ingestion.tika;
 
 import com.example.ragpoc.ingestion.IngestionValidationException;
-import com.example.ragpoc.ingestion.chunk.RawPage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,10 +16,12 @@ import org.springframework.core.io.FileSystemResource;
  * Extracts plain text from an uploaded file with Spring AI's Apache Tika reader.
  *
  * <p>Tika auto-detects the format, so PDF, DOCX, PPTX and HTML all take the same
- * path. What Tika does not give us is page boundaries, so the whole document is
- * treated as a single page: the downstream cleaner and chunker keep working
- * unchanged, but citations carry the document and section rather than a page
- * number.
+ * path. What it does not give us is page boundaries: the whole file is one text
+ * stream, and there is no page concept downstream either. Citations carry the
+ * document and section instead.
+ *
+ * <p>The formatter is a bean, not built per call: it is immutable, and its
+ * settings are tuning knobs rather than per-document state.
  *
  * <p>The validation reasons are preserved as far as Tika allows: size, a missing
  * text layer, encryption and parse failures are distinguishable. Page-count and
@@ -30,27 +31,21 @@ import org.springframework.core.io.FileSystemResource;
 public final class TikaTextExtractor {
 
   private final long maxBytes;
+  private final ExtractedTextFormatter formatter;
 
-  public TikaTextExtractor(long maxBytes) {
+  public TikaTextExtractor(long maxBytes, ExtractedTextFormatter formatter) {
     this.maxBytes = maxBytes;
+    this.formatter = formatter;
   }
 
-  /** Reads a file as a single page of text. */
-  public List<RawPage> extract(Path file) {
+  /** Reads a file as one text stream. */
+  public String extract(Path file) {
     long bytes = validateSize(file);
     log.info("ingest step=tika-read file={} bytes={}", file.getFileName(), bytes);
 
-    // Keep every line; our own cleaner decides what is boilerplate.
-    ExtractedTextFormatter formatter =
-        ExtractedTextFormatter.builder()
-            .withNumberOfTopTextLinesToDelete(0)
-            .withNumberOfBottomTextLinesToDelete(0)
-            .build();
-
     List<Document> documents;
     try {
-      documents =
-          new TikaDocumentReader(new FileSystemResource(file), formatter).read();
+      documents = new TikaDocumentReader(new FileSystemResource(file), formatter).read();
     } catch (RuntimeException e) {
       throw translate(file, e);
     }
@@ -60,9 +55,8 @@ public final class TikaTextExtractor {
       log.warn("ingest rejected file={} reason=NO_EXTRACTABLE_TEXT", file.getFileName());
       throw new IngestionValidationException(IngestionValidationException.Reason.NO_EXTRACTABLE_TEXT);
     }
-    log.info(
-        "ingest step=tika-extracted file={} chars={}", file.getFileName(), text.length());
-    return List.of(new RawPage(1, text));
+    log.info("ingest step=tika-extracted file={} chars={}", file.getFileName(), text.length());
+    return text;
   }
 
   private IngestionValidationException translate(Path file, RuntimeException failure) {

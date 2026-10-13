@@ -268,8 +268,6 @@ public class RetrievalService {
               candidate.hit().chunkId(),
               candidate.hit().documentId(),
               candidate.hit().docTitle(),
-              candidate.hit().pageStart(),
-              candidate.hit().pageEnd(),
               candidate.hit().score(),
               reranker.enabled() ? candidate.rerankScore() : null,
               i + 1,

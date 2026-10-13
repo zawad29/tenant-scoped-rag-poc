@@ -92,7 +92,11 @@ rag:
 
   ingestion:
     max-file-bytes: 52428800
-    max-pages: 500
+    formatter:
+      # Tika's own trimming stays off; the cleaner owns boilerplate removal.
+      left-alignment: false
+      delete-top-lines: 0
+      delete-bottom-lines: 0
 
   storage:
     local-root: ${RAG_STORAGE_ROOT:data/files}

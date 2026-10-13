@@ -46,11 +46,6 @@ public final class ViewFormat {
     return String.format(java.util.Locale.ROOT, "%.2f", value);
   }
 
-  /** Page range as shown in a citation, e.g. {@code "12"} or {@code "12-14"}. */
-  public static String pageRange(int start, int end) {
-    return start == end ? String.valueOf(start) : start + "-" + end;
-  }
-
   /** Renders an identifier for a URL; JTE writes only Strings. */
   public static String id(java.util.UUID value) {
     return value == null ? "" : value.toString();

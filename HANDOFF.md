@@ -6,12 +6,13 @@ Qdrant · Apache Tika · local ONNX · Java 21.
 
 ## State
 
-`./mvnw verify` is green: 73 unit tests + 20 integration tests (Testcontainers
+`./mvnw verify` is green: 69 unit tests + 20 integration tests (Testcontainers
 PostgreSQL + Qdrant). ONNX-dependent tests are skipped when `models/` is absent.
 
 The pipeline was refactored onto Spring AI and the reranker decomposed into
-provider-neutral pieces. `docs/pipeline.md` describes the result and
-`docs/decisions.md` records R1–R16 (R11–R16 are this refactor).
+provider-neutral pieces, then the page concept was removed from ingestion and
+retrieval. `docs/pipeline.md` describes the result and `docs/decisions.md` records
+R1–R16 (R11–R16 are these two refactors).
 
 ## What changed
 
@@ -34,8 +35,14 @@ provider-neutral pieces. `docs/pipeline.md` describes the result and
   because they are scale-specific.
 - **No `active` flag.** A replacement adds the new version's points, then deletes
   the superseded version by filter. Brief overlap accepted; data is reset anyway.
-- **No page numbers.** Tika gives one text stream, so citations carry the
-  document and section.
+- **No page numbers.** Tika gives one text stream with no page boundaries and no
+  page count, so the whole page concept is gone (R16): `RawPage` and `CleanedPage`
+  were deleted, the seam is `String extract(Path)` → `List<Block> clean(String)` →
+  `List<Chunk> chunk(title, blocks)` (R16), `Chunk`/`SearchHit`/`RetrievedChunk`
+  and the trace carry the document and section only, and the rendered-page
+  endpoint is gone. `Document.pageCount` stays nullable and unset, so the admin
+  list shows a dash. Tika's `ExtractedTextFormatter` is a bean built from
+  `rag.ingestion.formatter` rather than rebuilt per extract.
 
 ## Not built
 
