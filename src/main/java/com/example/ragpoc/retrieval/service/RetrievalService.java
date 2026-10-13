@@ -66,6 +66,7 @@ public class RetrievalService {
   }
 
   public RetrievalOutcome retrieve(CidContext cid, String rawQuestion) {
+    log.info("retrieve start cid={} user={}", cid.cidId(), cid.userId());
     InputGuard.GuardResult guard = inputGuard.inspect(cid, rawQuestion);
     if (!guard.allowed()) {
       if (guard.injectionSuspected()) {
@@ -73,6 +74,9 @@ public class RetrievalService {
         audit.record(
             cid.cidId(), cid.userId(), AuditEvent.Type.SECURITY_ACCESS_DENIED, "prompt injection attempt");
       }
+      log.info(
+          "retrieve step=refuse cid={} reason=input-guard message=\"{}\"",
+          cid.cidId(), guard.refusalMessage());
       return RetrievalOutcome.refused(
           emptyTrace(guard.question(), "input guard: " + guard.refusalMessage()),
           guard.refusalMessage());
@@ -93,8 +97,12 @@ public class RetrievalService {
           AssistantMessages.GENERIC_ERROR);
     }
     long searchMillis = elapsed(searchStart);
+    log.info(
+        "retrieve step=search cid={} candidates={} searchMillis={}",
+        cid.cidId(), hits.size(), searchMillis);
 
     if (hits.isEmpty()) {
+      log.info("retrieve step=refuse cid={} reason=no-candidates", cid.cidId());
       return RetrievalOutcome.refused(
           trace(
               question,
@@ -113,12 +121,26 @@ public class RetrievalService {
     long rerankStart = System.nanoTime();
     List<Candidate> candidates = scoreCandidates(question, hits);
     long rerankMillis = elapsed(rerankStart);
+    log.info(
+        "retrieve step=rerank cid={} candidates={} rerankMillis={} reranker={} enabled={}",
+        cid.cidId(), candidates.size(), rerankMillis, reranker.modelId(), reranker.enabled());
 
     double[] rerankScores = candidates.stream().mapToDouble(Candidate::rerankScore).toArray();
     RelevanceGate.GateDecision decision =
         reranker.enabled() ? gate.evaluate(rerankScores) : gate.evaluateWithoutReranker(candidates.size());
+    log.info(
+        "retrieve step=gate cid={} answer={} bestScore={} kept={} dropped={} reason=\"{}\" thresholds={}/{}",
+        cid.cidId(),
+        decision.answer(),
+        decision.bestScore(),
+        decision.keptCount(),
+        decision.droppedCount(),
+        decision.reason(),
+        gate.minRelevance(),
+        gate.minChunkRelevance());
 
     if (!decision.answer()) {
+      log.info("retrieve step=refuse cid={} reason=relevance-gate", cid.cidId());
       return RetrievalOutcome.refused(
           trace(
               question,
@@ -135,9 +157,13 @@ public class RetrievalService {
     }
 
     List<Candidate> ranked = rankForContext(candidates);
+    log.info(
+        "retrieve step=rank cid={} ranked={} topN={}",
+        cid.cidId(), ranked.size(), rerankSettings.topN());
     ContextAssembler.AssemblyResult assembly = assembler.assemble(ranked);
 
     if (assembly.chunks().isEmpty()) {
+      log.info("retrieve step=refuse cid={} reason=no-context-after-assembly", cid.cidId());
       return RetrievalOutcome.refused(
           trace(
               question,
@@ -153,6 +179,9 @@ public class RetrievalService {
           AssistantMessages.REFUSAL);
     }
 
+    log.info(
+        "retrieve done cid={} decision=answer selected={} searchMillis={} rerankMillis={}",
+        cid.cidId(), assembly.chunks().size(), searchMillis, rerankMillis);
     return RetrievalOutcome.answerable(
         assembly.chunks(),
         trace(

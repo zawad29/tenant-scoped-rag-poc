@@ -37,7 +37,8 @@ public final class TikaTextExtractor {
 
   /** Reads a file as a single page of text. */
   public List<RawPage> extract(Path file) {
-    validateSize(file);
+    long bytes = validateSize(file);
+    log.info("ingest step=tika-read file={} bytes={}", file.getFileName(), bytes);
 
     // Keep every line; our own cleaner decides what is boilerplate.
     ExtractedTextFormatter formatter =
@@ -56,27 +57,36 @@ public final class TikaTextExtractor {
 
     String text = documents.isEmpty() ? "" : documents.getFirst().getText();
     if (text == null || text.isBlank()) {
+      log.warn("ingest rejected file={} reason=NO_EXTRACTABLE_TEXT", file.getFileName());
       throw new IngestionValidationException(IngestionValidationException.Reason.NO_EXTRACTABLE_TEXT);
     }
+    log.info(
+        "ingest step=tika-extracted file={} chars={}", file.getFileName(), text.length());
     return List.of(new RawPage(1, text));
   }
 
   private IngestionValidationException translate(Path file, RuntimeException failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       if (cause instanceof EncryptedDocumentException) {
+        log.warn("ingest rejected file={} reason=ENCRYPTED", file.getFileName());
         return new IngestionValidationException(
             IngestionValidationException.Reason.ENCRYPTED, failure);
       }
     }
-    log.debug("Tika could not parse {}: {}", file, failure.toString());
+    log.warn("ingest rejected file={} reason=MALFORMED: {}", file.getFileName(), failure.toString());
     return new IngestionValidationException(IngestionValidationException.Reason.MALFORMED, failure);
   }
 
-  private void validateSize(Path file) {
+  private long validateSize(Path file) {
     try {
-      if (Files.size(file) > maxBytes) {
+      long size = Files.size(file);
+      if (size > maxBytes) {
+        log.warn(
+            "ingest rejected file={} reason=TOO_LARGE bytes={} maxBytes={}",
+            file.getFileName(), size, maxBytes);
         throw new IngestionValidationException(IngestionValidationException.Reason.TOO_LARGE);
       }
+      return size;
     } catch (IOException e) {
       throw new IngestionValidationException(IngestionValidationException.Reason.MALFORMED, e);
     }

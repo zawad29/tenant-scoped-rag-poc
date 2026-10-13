@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Builds the context that goes into the prompt.
@@ -17,6 +18,7 @@ import java.util.Set;
  * {@code S1}, {@code S2}, ... identifiers so a citation can be checked against
  * the sources that were actually supplied.
  */
+@Slf4j
 public class ContextAssembler {
 
   private final TokenCounter tokenCounter;
@@ -34,6 +36,8 @@ public class ContextAssembler {
   public record Dropped(Candidate candidate, String reason) {}
 
   public AssemblyResult assemble(List<Candidate> ranked) {
+    log.info(
+        "retrieve step=assemble-start candidates={} tokenBudget={}", ranked.size(), tokenBudget);
     List<RetrievedChunk> selected = new ArrayList<>();
     List<Dropped> dropped = new ArrayList<>();
     Set<String> seenText = new HashSet<>();
@@ -44,6 +48,8 @@ public class ContextAssembler {
 
       if (!seenText.add(normalised)) {
         dropped.add(new Dropped(candidate, "duplicate of an already selected chunk"));
+        log.debug(
+            "retrieve step=assemble drop chunk={} reason=duplicate", candidate.hit().chunkId());
         continue;
       }
 
@@ -54,13 +60,22 @@ public class ContextAssembler {
                 candidate,
                 "context token budget of %d would be exceeded (%d used, %d needed)"
                     .formatted(tokenBudget, usedTokens, tokens)));
+        log.debug(
+            "retrieve step=assemble drop chunk={} reason=token-budget used={} needed={} budget={}",
+            candidate.hit().chunkId(), usedTokens, tokens, tokenBudget);
         continue;
       }
 
       usedTokens += tokens;
       selected.add(toRetrievedChunk(selected.size(), candidate));
+      log.debug(
+          "retrieve step=assemble select source=S{} chunk={} tokens={} used={}",
+          selected.size(), candidate.hit().chunkId(), tokens, usedTokens);
     }
 
+    log.info(
+        "retrieve step=assemble-done selected={} dropped={} usedTokens={}",
+        selected.size(), dropped.size(), usedTokens);
     return new AssemblyResult(List.copyOf(selected), List.copyOf(dropped));
   }
 

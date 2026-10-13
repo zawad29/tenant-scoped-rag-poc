@@ -101,15 +101,19 @@ public class IngestionService {
 
     document.markProcessing();
     documents.save(document);
+    log.info(
+        "ingest start cid={} document={} version={} title=\"{}\" storageKey={}",
+        cid.cidId(),
+        documentId,
+        version,
+        document.getTitle(),
+        documentVersion.getStorageKey());
 
     try {
       int chunkCount = run(cid, document, documentVersion);
       log.info(
-          "Ingested document {} version {} for cid {}: {} chunks",
-          documentId,
-          version,
-          cid.cidId(),
-          chunkCount);
+          "ingest done cid={} document={} version={} chunks={} status=ACTIVE",
+          cid.cidId(), documentId, version, chunkCount);
     } catch (RuntimeException e) {
       cleanUpAfterFailure(cid, document, documentVersion, e);
       throw e;
@@ -118,10 +122,23 @@ public class IngestionService {
 
   private int run(CidContext cid, Document document, DocumentVersion version) {
     Path source = storage.pathOf(cid, version.getStorageKey());
+    log.debug("ingest[{}] v{} resolved stored file {}", document.getId(), version.getVersion(), source);
 
     List<RawPage> pages = extractor.extract(source);
+    log.info(
+        "ingest step=extract cid={} document={} version={} pages={}",
+        cid.cidId(), document.getId(), version.getVersion(), pages.size());
+
     List<CleanedPage> cleaned = cleaner.clean(pages);
+    long blocks = cleaned.stream().mapToLong(page -> page.blocks().size()).sum();
+    log.info(
+        "ingest step=clean cid={} document={} version={} blocks={}",
+        cid.cidId(), document.getId(), version.getVersion(), blocks);
+
     List<Chunk> chunks = chunker.chunk(document.getTitle(), cleaned);
+    log.info(
+        "ingest step=chunk cid={} document={} version={} chunks={}",
+        cid.cidId(), document.getId(), version.getVersion(), chunks.size());
 
     if (chunks.isEmpty()) {
       throw new IngestionValidationException(
@@ -131,11 +148,22 @@ public class IngestionService {
     List<org.springframework.ai.document.Document> records = new ArrayList<>(chunks.size());
     for (Chunk chunk : chunks) {
       records.add(toIndexedDocument(cid, document, version.getVersion(), chunk));
+      log.debug(
+          "ingest[{}] v{} chunk={} pages={} section={}",
+          document.getId(), version.getVersion(), chunk.index(), chunk.pageRange(), chunk.sectionTitle());
     }
 
     // The store embeds and upserts. Each version's chunk ids are distinct, so a
     // replacement never collides with the version it supersedes.
     index.add(records);
+    log.info(
+        "ingest step=index cid={} document={} version={} documents={} embeddingModel={} dimension={}",
+        cid.cidId(),
+        document.getId(),
+        version.getVersion(),
+        records.size(),
+        embeddingModelId,
+        embeddingDimension);
 
     transactions.executeWithoutResult(
         status -> {
@@ -144,6 +172,9 @@ public class IngestionService {
           document.activate(version.getVersion(), version.getContentHash(), pages.size());
           documents.save(document);
         });
+    log.info(
+        "ingest step=activate cid={} document={} version={} status=ACTIVE",
+        cid.cidId(), document.getId(), version.getVersion());
 
     // Only after the switch: remove superseded versions.
     cleanUpSupersededVersions(cid, document.getId(), version.getVersion());
@@ -173,6 +204,9 @@ public class IngestionService {
   private void cleanUpSupersededVersions(CidContext cid, UUID documentId, int keepVersion) {
     for (DocumentVersion superseded :
         versions.findByDocumentIdAndVersionNot(documentId, keepVersion)) {
+      log.info(
+          "ingest step=cleanup cid={} document={} removing superseded version={}",
+          cid.cidId(), documentId, superseded.getVersion());
       index.deleteByDocumentVersion(cid, documentId, superseded.getVersion());
       storage.delete(cid, superseded.getStorageKey());
       versions.delete(superseded);
@@ -182,6 +216,9 @@ public class IngestionService {
   /** Best-effort removal of anything a failed attempt produced. */
   private void cleanUpAfterFailure(
       CidContext cid, Document document, DocumentVersion version, RuntimeException cause) {
+    log.info(
+        "ingest step=cleanup-after-failure cid={} document={} version={}",
+        cid.cidId(), document.getId(), version.getVersion());
     try {
       index.deleteByDocumentVersion(cid, document.getId(), version.getVersion());
     } catch (RuntimeException e) {

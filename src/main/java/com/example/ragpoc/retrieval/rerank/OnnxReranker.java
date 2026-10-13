@@ -3,6 +3,7 @@ package com.example.ragpoc.retrieval.rerank;
 import com.example.ragpoc.retrieval.onnx.OnnxCrossEncoder;
 import ai.onnxruntime.OrtException;
 import java.util.List;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * A {@link Reranker} backed by a local ONNX cross-encoder.
@@ -14,6 +15,7 @@ import java.util.List;
  * <p>Raw logits are returned untouched ({@link ScoringScale#LOGIT}); the
  * relevance gate thresholds these exact values.
  */
+@Slf4j
 public final class OnnxReranker implements Reranker {
 
   private final OnnxCrossEncoder encoder;
@@ -43,11 +45,22 @@ public final class OnnxReranker implements Reranker {
 
   @Override
   public double[] score(String query, List<String> passages) {
+    log.info(
+        "retrieve step=rerank-start model={} passages={} batchSize={}",
+        modelId, passages.size(), batchSize);
     double[] scores = new double[passages.size()];
     for (int start = 0; start < passages.size(); start += batchSize) {
       int end = Math.min(passages.size(), start + batchSize);
+      log.debug("retrieve step=rerank batch=[{}, {})", start, end);
       double[] batch = scoreBatch(query, passages.subList(start, end));
       System.arraycopy(batch, 0, scores, start, batch.length);
+    }
+    if (log.isDebugEnabled()) {
+      StringBuilder formatted = new StringBuilder();
+      for (double score : scores) {
+        formatted.append(String.format("%.3f ", score));
+      }
+      log.debug("retrieve step=rerank-done model={} scores=[{}]", modelId, formatted.toString().trim());
     }
     return scores;
   }

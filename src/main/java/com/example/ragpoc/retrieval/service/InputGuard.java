@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Checks a question before any retrieval happens.
@@ -21,6 +22,7 @@ import java.util.regex.Pattern;
  * that asks the assistant to ignore its instructions has no legitimate answer,
  * and refusing before retrieval means the attempt costs nothing.
  */
+@Slf4j
 public class InputGuard {
 
   private static final List<Pattern> INJECTION_PATTERNS =
@@ -56,25 +58,36 @@ public class InputGuard {
 
   public GuardResult inspect(CidContext cid, String rawQuestion) {
     if (rawQuestion == null || rawQuestion.isBlank()) {
+      log.debug("retrieve step=guard cid={} allowed=false reason=blank", cid.cidId());
       return GuardResult.rejected("", AssistantMessages.REJECTED_INPUT, false);
     }
 
     String question = stripControlCharacters(rawQuestion);
 
     if (question.length() > maxQuestionChars) {
+      log.warn(
+          "retrieve step=guard cid={} allowed=false reason=too-long chars={} max={}",
+          cid.cidId(), question.length(), maxQuestionChars);
       return GuardResult.rejected(question, AssistantMessages.REJECTED_INPUT, false);
     }
 
     for (Pattern pattern : INJECTION_PATTERNS) {
       if (pattern.matcher(question).find()) {
+        log.warn(
+            "retrieve step=guard cid={} allowed=false reason=injection pattern=\"{}\"",
+            cid.cidId(), pattern.pattern());
         return GuardResult.rejected(question, AssistantMessages.REJECTED_INPUT, true);
       }
     }
 
     if (!withinRateLimit(cid)) {
+      log.warn(
+          "retrieve step=guard cid={} user={} allowed=false reason=rate-limit limit={}/min",
+          cid.cidId(), cid.userId(), requestsPerMinute);
       return GuardResult.rejected(question, AssistantMessages.REJECTED_INPUT, false);
     }
 
+    log.info("retrieve step=guard cid={} allowed=true chars={}", cid.cidId(), question.length());
     return GuardResult.allowed(question);
   }
 

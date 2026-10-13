@@ -8,6 +8,7 @@ import com.example.ragpoc.retrieval.model.SearchHit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -27,6 +28,7 @@ import org.springframework.ai.vectorstore.VectorStore;
  *       already filters; this is the independent second opinion.
  * </ol>
  */
+@Slf4j
 public final class CidScopedVectorSearch {
 
   private final VectorStore vectorStore;
@@ -41,6 +43,14 @@ public final class CidScopedVectorSearch {
 
   /** Embeds the query, searches within the caller's cid, and verifies the result. */
   public List<SearchHit> search(CidContext cid, String question) {
+    int queryChars = question == null ? 0 : question.length();
+    log.info(
+        "retrieve step=search-start cid={} topK={} queryChars={}",
+        cid.cidId(), denseCandidates, queryChars);
+    if (log.isDebugEnabled()) {
+      log.debug("retrieve step=search query=\"{}\"", question);
+    }
+
     SearchRequest request =
         SearchRequest.builder()
             .query(question)
@@ -49,6 +59,8 @@ public final class CidScopedVectorSearch {
             .build();
 
     List<Document> documents = vectorStore.similaritySearch(request);
+    log.info(
+        "retrieve step=search-done cid={} candidates={}", cid.cidId(), documents.size());
     verifyCid(cid, documents);
 
     List<SearchHit> hits = new ArrayList<>(documents.size());
@@ -67,6 +79,9 @@ public final class CidScopedVectorSearch {
     for (Document document : documents) {
       String recorded = String.valueOf(document.getMetadata().get(ChunkMetadata.CID_ID));
       if (!cid.cidId().toString().equals(recorded)) {
+        log.warn(
+            "retrieve step=cid-verification FAILED cid={} chunk={} recordedCid={}",
+            cid.cidId(), document.getId(), recorded);
         audit.record(
             cid.cidId(),
             cid.userId(),
@@ -86,16 +101,21 @@ public final class CidScopedVectorSearch {
             : metadata.get(ChunkMetadata.SECTION_TITLE).toString();
 
     // Tika has no page boundaries, so every chunk reports page 1.
-    return new SearchHit(
-        UUID.fromString(document.getId()),
-        UUID.fromString(String.valueOf(metadata.get(ChunkMetadata.CID_ID))),
-        UUID.fromString(String.valueOf(metadata.get(ChunkMetadata.DOCUMENT_ID))),
-        ((Number) metadata.get(ChunkMetadata.VERSION)).intValue(),
-        1,
-        1,
-        sectionTitle,
-        String.valueOf(metadata.get(ChunkMetadata.DOC_TITLE)),
-        document.getText(),
-        document.getScore() == null ? 0.0 : document.getScore());
+    var hit =
+        new SearchHit(
+            UUID.fromString(document.getId()),
+            UUID.fromString(String.valueOf(metadata.get(ChunkMetadata.CID_ID))),
+            UUID.fromString(String.valueOf(metadata.get(ChunkMetadata.DOCUMENT_ID))),
+            ((Number) metadata.get(ChunkMetadata.VERSION)).intValue(),
+            1,
+            1,
+            sectionTitle,
+            String.valueOf(metadata.get(ChunkMetadata.DOC_TITLE)),
+            document.getText(),
+            document.getScore() == null ? 0.0 : document.getScore());
+    log.debug(
+        "retrieve candidate chunk={} document=\"{}\" denseScore={} chars={}",
+        hit.chunkId(), hit.docTitle(), hit.score(), hit.text().length());
+    return hit;
   }
 }
