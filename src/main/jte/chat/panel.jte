@@ -121,12 +121,15 @@
               <span class="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-600">dropped</span>
             @endif
           </summary>
-          <div class="px-3 pb-3 text-xs text-slate-600">
-            @if(c.selected())
-              Selected into the context for the answer.
-            @else
-              ${c.droppedReason()}
-            @endif
+          <div class="space-y-2 px-3 pb-3">
+            <p class="whitespace-pre-wrap text-xs leading-relaxed text-slate-600">${c.text()}</p>
+            <div class="text-xs text-slate-500">
+              @if(c.selected())
+                Selected into the context for the answer.
+              @else
+                ${c.droppedReason()}
+              @endif
+            </div>
           </div>
         </details>
       @endfor

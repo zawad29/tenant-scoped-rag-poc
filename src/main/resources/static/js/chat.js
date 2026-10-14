@@ -91,6 +91,7 @@
         return read(response.body.getReader(), {
           panel: function (data) {
             panel.innerHTML = data.html;
+            panel.scrollTop = 0;
             scrollTo(bubble);
           },
           delta: function (data) {

@@ -114,7 +114,10 @@ class ChatControllerIT extends IntegrationTestSupport {
         .andExpect(content().string(containsString("5.420")))
         .andExpect(content().string(containsString("Rerank")))
         // Generation timing is only known on the blocking path.
-        .andExpect(content().string(containsString("Generation")));
+        .andExpect(content().string(containsString("Generation")))
+        // The content of a considered-but-dropped candidate is rendered too,
+        // collapsed inside its own <details>.
+        .andExpect(content().string(containsString("may carry over unused leave")));
   }
 
   @Test
@@ -252,10 +255,28 @@ class ChatControllerIT extends IntegrationTestSupport {
 
     RetrievalTrace.CandidateTrace selected =
         new RetrievalTrace.CandidateTrace(
-            selectedChunk, documentId, "Employee Handbook", 0.910, 5.420, 1, 1, true, null);
+            selectedChunk,
+            documentId,
+            "Employee Handbook",
+            0.910,
+            5.420,
+            1,
+            1,
+            true,
+            null,
+            "Employees accrue eighteen days of annual leave.");
     RetrievalTrace.CandidateTrace dropped =
         new RetrievalTrace.CandidateTrace(
-            droppedChunk, documentId, "Employee Handbook", 0.420, -1.200, 2, 2, false, "not selected");
+            droppedChunk,
+            documentId,
+            "Employee Handbook",
+            0.420,
+            -1.200,
+            2,
+            2,
+            false,
+            "not selected",
+            "Employees may carry over unused leave with manager approval.");
 
     RetrievalTrace trace =
         new RetrievalTrace(

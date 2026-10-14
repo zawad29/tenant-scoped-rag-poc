@@ -254,3 +254,17 @@ cannot forget the CSRF token or show another cid's name.
   or its drop reason. No JavaScript is involved. Generation timings therefore
   arrive as a separate `timings` fragment rather than by re-rendering the panel,
   which also preserves whichever rows the user had expanded.
+
+### R20 follow-up — independently scrollable panel, candidate text in the trace
+
+The two chat columns scroll separately: on `xl` the grid takes
+`calc(100vh - 7rem)` and each column is a `min-h-0` flex child with its own
+`overflow-y-auto` region, so reading candidates never moves the conversation and
+vice versa. Below `xl` the columns stack and the page scrolls normally.
+
+The retrieval panel now shows the content of every considered candidate, not only
+the selected ones, each collapsed inside its own `<details>`. That required
+`RetrievalTrace.CandidateTrace` to carry `text`, because the dropped candidates'
+text existed only inside the vector-store response and nowhere in the outcome.
+It is by far the largest field in the trace; if the trace is ever persisted per
+message (spec §13), this is the field to trim or move out of the audit record.

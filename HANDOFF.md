@@ -24,8 +24,8 @@ retrieval panel with per-stage timings. There is still no chat memory.
   htmx boosts sidebar navigation and drives a partial refresh of the documents
   table (`hx-get` + `hx-select`). The retrieval panel is a nested collapsible
   list of `<details>` elements (selected context, then every candidate), each
-  expanding to its content. The shell attributes are added in one place,
-  `web/ShellModel`.
+  expanding to its content, and on `xl` the two chat columns scroll
+  independently. The shell attributes are added in one place, `web/ShellModel`.
 - **Chat generation.** `chat/` now holds `ChatService` (retrieve → generate),
   `ChatPrompts` (the grounded prompt), `ChatEvent`/`ChatTimings`, and the SSE
   controller. Retrieval still decides whether the model is called; a refusal is
@@ -117,8 +117,17 @@ line commented out when there is no key — see the trap below.
   `NoSuchBeanDefinitionException`.
 - **JTE 3.2.4 has no `render(name, params)` that returns a `String`.** Rendering
   a partial programmatically needs a `gg.jte.output.StringOutput` sink.
+- **`CandidateTrace.text` is deliberately fat.** The panel shows the content of
+  considered candidates, so the trace carries every candidate's text. Trim or
+  drop it before persisting the trace per message (spec §13).
 - **Testcontainers Ryuk** cannot connect in this Docker setup; run integration
   tests with `TESTCONTAINERS_RYUK_DISABLED=true`.
+- **A running app does not pick up Java changes, but JTE hot-recompiles templates.**
+  In dev mode JTE recompiles `.jte` from `src/main/jte` on the first request after
+  an edit, while Java classes are only loaded at JVM start. Change a template and
+  a record/class together and the new template calls a method the loaded class
+  does not have: `NoSuchMethodError` at render time (seen with
+  `CandidateTrace.text()`). It is a stale JVM, not a build failure — restart.
 - **Stale `target/` resources.** An old build leaves migration files behind
   (`V1__tenancy_and_security.sql`, `V2__documents.sql`, …) that Flyway reports as
   duplicate versions. Run `./mvnw clean` after schema changes.

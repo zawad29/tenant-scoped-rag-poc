@@ -14,11 +14,11 @@
 @param String answer
 @param String error
 @template.layout.app(title = "Chat", active = active, cidName = cidName, email = email, role = role, isCidAdmin = isCidAdmin, csrfToken = csrfToken, csrfParameterName = csrfParameterName, content = @`
-  <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,28rem)]">
+  <div class="grid gap-6 xl:h-[calc(100vh-7rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,28rem)]">
 
     <!-- Conversation -->
-    <section class="flex min-h-[70vh] flex-col rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div id="conversation" class="flex-1 space-y-4 overflow-y-auto p-4" aria-live="polite">
+    <section class="flex min-h-[70vh] min-w-0 flex-col rounded-xl border border-slate-200 bg-white shadow-sm xl:min-h-0">
+      <div id="conversation" class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4" aria-live="polite">
         @if(question != null)
           <div class="ml-auto max-w-[85%] rounded-2xl rounded-br-sm bg-indigo-600 px-4 py-2.5 text-sm leading-relaxed text-white">${question}</div>
         @endif
@@ -34,7 +34,7 @@
         @endif
       </div>
 
-      <form id="chat-form" class="border-t border-slate-200 p-4" method="post" action="/chat"
+      <form id="chat-form" class="shrink-0 border-t border-slate-200 p-4" method="post" action="/chat"
             data-stream-url="/chat/stream"
             data-csrf-name="${csrfParameterName}" data-csrf-value="${csrfToken}">
         <input type="hidden" name="${csrfParameterName}" value="${csrfToken}">
@@ -55,18 +55,19 @@
       </form>
     </section>
 
-    <!-- Retrieval panel -->
-    <section class="min-w-0">
+    <!-- Retrieval panel: its own scroll container, so the conversation and the
+         candidates can be read independently. -->
+    <section class="flex min-h-0 min-w-0 flex-col xl:h-full">
       @if(error != null)
-        <div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert">
+        <div class="mb-4 shrink-0 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert">
           ${error}
         </div>
       @endif
-      <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div class="border-b border-slate-200 px-4 py-3">
+      <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div class="shrink-0 border-b border-slate-200 px-4 py-3">
           <h2 class="text-sm font-semibold text-slate-900">Retrieval &amp; timings</h2>
         </div>
-        <div id="retrieval-panel" class="p-4">
+        <div id="retrieval-panel" class="min-h-0 flex-1 overflow-y-auto p-4">
           @if(outcome != null)
             @template.chat.panel(outcome, retrievalMillis, timings)
           @elseif(error == null)

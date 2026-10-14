@@ -280,7 +280,8 @@ public class RetrievalService {
               i + 1,
               rerankRanks == null ? null : rerankRanks[i],
               isSelected,
-              isSelected ? null : "not selected"));
+              isSelected ? null : "not selected",
+              candidate.hit().text()));
     }
 
     return new RetrievalTrace(

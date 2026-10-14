@@ -29,7 +29,14 @@ public record RetrievalTrace(
     List<CandidateTrace> candidates,
     List<Citation> citations) {
 
-  /** Per-candidate detail, in dense order. */
+  /**
+   * Per-candidate detail, in dense order.
+   *
+   * <p>{@code text} is carried so the chat panel can show the content of every
+   * considered candidate, not only the selected ones. It is by far the largest
+   * field here; if the trace is ever persisted per message, this is the one to
+   * trim.
+   */
   public record CandidateTrace(
       UUID chunkId,
       UUID documentId,
@@ -39,7 +46,8 @@ public record RetrievalTrace(
       int denseRank,
       Integer rerankRank,
       boolean selected,
-      String droppedReason) {}
+      String droppedReason,
+      String text) {}
 
   /** What was shown to the user as a source. */
   public record Citation(
