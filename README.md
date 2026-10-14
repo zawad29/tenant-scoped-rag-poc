@@ -13,6 +13,7 @@ answer.
 | Structured data | PostgreSQL 17 (Flyway migrations) |
 | Vectors | Qdrant via Spring AI's `QdrantVectorStore` |
 | Embeddings / reranker | Spring AI `TransformersEmbeddingModel` (`all-MiniLM-L6-v2`) + local ONNX cross-encoder (`ms-marco-MiniLM-L-6-v2`) |
+| Chat model | Spring AI `ChatClient` over DeepSeek (`deepseek-chat`), streamed to the browser as server-sent events |
 | Document parsing | Apache Tika via Spring AI's `TikaDocumentReader` |
 | Views | JTE server-side templates |
 | Boilerplate | Lombok (`@Slf4j` for logging) |
@@ -36,7 +37,8 @@ com.example.ragpoc
 │                 ├── onnx/       Cross-encoder + tensor helpers
 │                 ├── math/       Pure vector helpers
 │                 └── service/    RetrievalService, guard, gate, context assembler
-├── chat/         Retrieval console controller (no generation yet)
+├── chat/         Grounded generation: ChatService, prompts, ChatEvent/
+│                 ChatTimings, SSE controller
 ├── audit/        AuditEvent entity, repository, service
 ├── storage/      Local file storage, keyed by cid
 ├── security/     Login, principal, cid argument resolver
@@ -58,7 +60,11 @@ cp .env.example .env
 #    Compose's implicit .env lookup.
 docker compose --env-file .env up -d
 
-# 4. Run (Spring Boot does not read .env, so export it first).
+# 4. Chat provider. Put your DeepSeek key in .env (DEEPSEEK_API_KEY=sk-...),
+#    or leave it commented out: the app starts and retrieval works either way,
+#    and only the generated answer reports the missing key.
+#
+# 5. Run (Spring Boot does not read .env, so export it first).
 set -a; source .env; set +a
 ./mvnw spring-boot:run        # :8080
 ```
@@ -129,11 +135,11 @@ Ingestion runs synchronously on the upload request, so the cid is passed
 | Route | Purpose |
 | --- | --- |
 | `/` | Home, links to the other pages |
-| `/chat` | Retrieval console: ask a question and see the candidates, ranks and scores. Reply generation is not implemented; the assistant area is a disabled placeholder. |
+| `/chat` | Chat: streamed answers grounded in the cid's documents, with a panel showing the retrieved candidates, selected context and per-stage timings |
 | `/admin/documents` | Upload / replace / delete documents and list ingested ones (cid admins) |
 | `/admin/users` | List and create users (cid admins) |
 | `/cid/profile` | Edit the organisation's name, address and email |
-| `/documents/{id}`, `/documents/{id}/pages/{n}` | Download the PDF, render a page as PNG |
+| `/documents/{id}` | Download the PDF |
 
 ## Known gaps
 
@@ -145,6 +151,9 @@ Ingestion runs synchronously on the upload request, so the cid is passed
   retrieval is guard → dense search → rerank → gate → context.
 - **No page-number citations.** Tika returns one text stream, so citations carry
   the document and section, not a page range.
-- **Chat replies are not implemented.** `/chat` is a retrieval console that shows
-  what retrieval found; the assistant reply area is a disabled placeholder.
+- **No chat memory yet.** Each question is retrieved and answered fresh; a
+  follow-up has no context from the previous turn, and no session or message
+  rows are written. Spec §13 is the next step.
+- **Chat needs a DeepSeek key.** `DEEPSEEK_API_KEY` must be set for answers; the
+  rest of the app runs without it.
 - **No row-level security** yet; isolation is enforced in the application layer.

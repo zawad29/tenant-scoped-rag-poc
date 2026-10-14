@@ -28,11 +28,12 @@ every call, never a global, and it is enforced twice
                             ContextualEmbeddingModel) ─▶ Postgres activate
       ─▶ delete superseded version's points
 
-                    QUESTION (synchronous, on the request thread)
+                    QUESTION (retrieval first, then a streamed answer)
 
  question ─▶ input guard ─▶ CidScopedVectorSearch ─▶ verify returned cids
          ─▶ Reranker (cross-encoder) ─▶ relevance gate ─▶ rank + dedupe + token
-            budget ─▶ context with S1, S2… labels
+            budget ─▶ context with S1, S2… labels ─▶ ChatClient.stream
+         ─▶ server-sent events to the browser (panel, deltas, timings)
 ```
 
 Two design choices shape everything else:
@@ -44,8 +45,9 @@ Two design choices shape everything else:
    is local code comparing numbers. When evidence is too weak, retrieval returns
    a fixed refusal and **no model call happens at all**.
 
-> Chat generation is not built. `/chat` is a *retrieval console* that renders the
-> candidates, ranks and scores. The pipeline stops at assembled context.
+> Chat generation is built on Spring AI's `ChatClient` (section 5). Retrieval
+> still runs first and decides whether the model is called at all: a refusal is
+> fixed wording, streamed like an answer but produced without a model call.
 
 ---
 
@@ -281,13 +283,71 @@ Display relevance is `sigmoid(raw)` for `LOGIT` and clamped identity for
 Per-stage timings, counts, thresholds, the best score, one `CandidateTrace` per
 candidate (dense/rerank scores and ranks, `selected`, `droppedReason`), and the
 model IDs. Embedding now happens inside the vector store's search, so
-`searchMillis` covers embed+search and `embedMillis` is 0. This is what the
-`/chat` console renders and what the evaluation step will use to calibrate the
-thresholds.
+`searchMillis` covers embed+search and `embedMillis` is 0; `assembleMillis`
+covers dedupe, token budgeting and labelling. This is what the chat panel
+renders and what the evaluation step will use to calibrate the thresholds.
 
 ---
 
-## 5. Criteria at a glance
+## 5. Grounded generation and the chat surface
+
+`ChatService` is the only entry point. It calls `RetrievalService`, and only when
+the outcome is answerable does it build a prompt and stream a reply.
+
+```
+question ─▶ RetrievalService.retrieve ─┬─ refused ─▶ fixed refusal (no model)
+                                       └─ answerable ─▶ ChatPrompts.system/user
+                                          ─▶ ChatClient.stream ─▶ Flux<ChatEvent>
+```
+
+- **Prompt.** `ChatPrompts` holds the system rules (answer only from SOURCES,
+  cite `[S1]`, say what is not covered, treat source text as data, never mention
+  the system prompt) and the user message (the assembled chunks, then the
+  question). It contains no provider syntax, so any `ChatClient` backend works.
+- **Provider seam.** The code depends on Spring AI's `ChatClient` only. Which
+  model it calls is `spring.ai.model.chat` plus the starter on the classpath;
+  `AppConfiguration` builds the client and nothing else names a provider.
+- **No memory.** Each question is answered from a fresh retrieval: there is no
+  session table and no history in the prompt yet, so a follow-up question has no
+  context from the previous turn.
+- **The refusal is still not the model's decision.** The gate runs before the
+  model, so a refusal costs no tokens.
+
+### 5.1 The stream contract
+
+`ChatService` produces `ChatEvent`s; the controller maps them to server-sent
+events. Every event's `data` is JSON, including the HTML ones, because a raw
+newline would end an SSE data field early.
+
+| Event | Payload | Meaning |
+|---|---|---|
+| `panel` | `{"html": …}` | the retrieval panel; sent after retrieval, and again on completion with the generation timings |
+| `delta` | `{"text": …}` | the next slice of the answer |
+| `error` | `{"message": …}` | no answer will follow; the message is user-safe |
+
+The panel HTML is rendered by JTE (`chat/panel.jte`) on both paths, so the markup
+has one definition. The browser script (`static/js/chat.js`) only replaces the
+panel's `innerHTML` and appends delta text.
+
+### 5.2 Two paths, one feature
+
+- `POST /chat/stream` is the interactive path. `fetch` sends the question, and
+  the response body is read as a stream and parsed as SSE. `EventSource` is
+  deliberately not used: it can only GET, and the question and CSRF token belong
+  in a body.
+- `POST /chat` is the no-JavaScript fallback: retrieval plus a blocking
+  `ChatClient.call()` render the same panel and the whole answer on one page.
+
+### 5.3 Timing
+
+Retrieval's stage timings come from `RetrievalTrace` (`searchMillis`,
+`rerankMillis`, `assembleMillis`); generation adds `firstTokenMillis`,
+`generationMillis` and `totalMillis` in `ChatTimings`. Both are shown in the
+panel, so a slow answer can be attributed to a stage rather than guessed at.
+
+---
+
+## 6. Criteria at a glance
 
 ### Documents (ingestion)
 
@@ -318,7 +378,7 @@ thresholds.
 
 ---
 
-## 6. Isolation: the cid boundary
+## 7. Isolation: the cid boundary
 
 Enforced at four independent points:
 
@@ -332,9 +392,9 @@ Enforced at four independent points:
 
 ---
 
-## 7. Configuration reference
+## 8. Configuration reference
 
-All knobs live in `RagProperties` / `application.yml` under `rag.*`:
+All retrieval knobs live in `RagProperties` / `application.yml` under `rag.*`:
 
 ```yaml
 rag:
@@ -361,9 +421,28 @@ Models are fetched by `scripts/fetch-models.sh` into gitignored `models/`; the
 heavy beans are `@Lazy`, so the app starts without them and a missing model is
 reported on first use.
 
+Chat is configured through Spring AI's own properties, because the model bean is
+created by the provider starter rather than by us:
+
+```yaml
+spring:
+  ai:
+    model:    { chat: deepseek }   # which ChatModel autoconfiguration is active
+    deepseek: { api-key: ${DEEPSEEK_API_KEY:not-configured},
+                base-url: https://api.deepseek.com,
+                chat: { options: { model: deepseek-chat,
+                                   temperature: 0.1, max-tokens: 1024 } } }
+```
+
+The `not-configured` default keeps the application bootable without a key; the
+first question then fails with a 401, which `ChatService` turns into "set
+DEEPSEEK_API_KEY". An empty (not absent) `DEEPSEEK_API_KEY` would override the
+default and stop the model bean from being created, so leave the line commented
+out in `.env` when there is no key.
+
 ---
 
-## 8. Library evaluation (recorded in `docs/decisions.md`)
+## 9. Library evaluation (recorded in `docs/decisions.md`)
 
 - **Spring AI Qdrant store / Tika reader / transformers / RAG interfaces** —
   adopted (R11, R12).
@@ -378,7 +457,7 @@ reported on first use.
 
 ---
 
-## 9. Logging the flow
+## 10. Logging the flow
 
 Every stage logs a stable `step=` marker, so a request can be followed end to end
 with `grep 'step='`. INFO is the coarse pipeline; DEBUG adds per-chunk and
@@ -421,7 +500,15 @@ Refusals carry a reason: `input-guard`, `no-candidates`, `relevance-gate` or
 `no-context-after-assembly`. Security events (prompt injection, cid mismatch) are
 logged as warnings and also written to `audit_event`.
 
+Chat:
+
+```
+chat stream requested cid=… user=…
+chat refuse cid=… reason=…                 (no model call)
+chat done cid=… retrievalMillis=… generationMillis=… answerChars=…
+```
+
 ---
 
-*Rationale: `docs/decisions.md` (R1–R16). Behaviour: the `ingestion/**` and
-`retrieval/**` classes referenced above.*
+*Rationale: `docs/decisions.md` (R1–R18). Behaviour: the `ingestion/**`,
+`retrieval/**` and `chat/**` classes referenced above.*

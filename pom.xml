@@ -146,6 +146,16 @@
       <groupId>org.springframework.ai</groupId>
       <artifactId>spring-ai-tika-document-reader</artifactId>
     </dependency>
+    <!--
+      Grounded generation: DeepSeek's chat completion API. The starter brings
+      `DeepSeekChatModel`, which is activated by `spring.ai.model.chat=deepseek`,
+      so the provider is chosen in configuration and the code only depends on
+      Spring AI's provider-neutral `ChatClient`.
+    -->
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-starter-model-deepseek</artifactId>
+    </dependency>
 
     <!-- In-process ONNX cross-encoder reranking -->
     <dependency>

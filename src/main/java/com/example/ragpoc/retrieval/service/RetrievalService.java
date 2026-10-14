@@ -114,6 +114,7 @@ public class RetrievalService {
               Double.NEGATIVE_INFINITY,
               0,
               searchMillis,
+              0,
               0),
           AssistantMessages.REFUSAL);
     }
@@ -152,7 +153,8 @@ public class RetrievalService {
               decision.bestScore(),
               0,
               searchMillis,
-              rerankMillis),
+              rerankMillis,
+              0),
           AssistantMessages.REFUSAL);
     }
 
@@ -160,7 +162,9 @@ public class RetrievalService {
     log.info(
         "retrieve step=rank cid={} ranked={} topN={}",
         cid.cidId(), ranked.size(), rerankSettings.topN());
+    long assembleStart = System.nanoTime();
     ContextAssembler.AssemblyResult assembly = assembler.assemble(ranked);
+    long assembleMillis = elapsed(assembleStart);
 
     if (assembly.chunks().isEmpty()) {
       log.info("retrieve step=refuse cid={} reason=no-context-after-assembly", cid.cidId());
@@ -175,13 +179,14 @@ public class RetrievalService {
               decision.bestScore(),
               0,
               searchMillis,
-              rerankMillis),
+              rerankMillis,
+              assembleMillis),
           AssistantMessages.REFUSAL);
     }
 
     log.info(
-        "retrieve done cid={} decision=answer selected={} searchMillis={} rerankMillis={}",
-        cid.cidId(), assembly.chunks().size(), searchMillis, rerankMillis);
+        "retrieve done cid={} decision=answer selected={} searchMillis={} rerankMillis={} assembleMillis={}",
+        cid.cidId(), assembly.chunks().size(), searchMillis, rerankMillis, assembleMillis);
     return RetrievalOutcome.answerable(
         assembly.chunks(),
         trace(
@@ -194,7 +199,8 @@ public class RetrievalService {
             decision.bestScore(),
             0,
             searchMillis,
-            rerankMillis));
+            rerankMillis,
+            assembleMillis));
   }
 
   private List<Candidate> scoreCandidates(String question, List<SearchHit> hits) {
@@ -236,7 +242,8 @@ public class RetrievalService {
       double bestRerankScore,
       long embedMillis,
       long searchMillis,
-      long rerankMillis) {
+      long rerankMillis,
+      long assembleMillis) {
 
     java.util.Set<UUID> selectedIds = new java.util.HashSet<>();
     for (RetrievedChunk chunk : selected) {
@@ -291,6 +298,7 @@ public class RetrievalService {
         embedMillis,
         searchMillis,
         rerankMillis,
+        assembleMillis,
         candidateTraces,
         List.of());
   }
@@ -308,6 +316,7 @@ public class RetrievalService {
         gate.minChunkRelevance(),
         embeddingModelId,
         reranker.modelId(),
+        0,
         0,
         0,
         0,

@@ -1,6 +1,8 @@
 package com.example.ragpoc.config;
 
 import com.example.ragpoc.audit.service.AuditService;
+import com.example.ragpoc.chat.service.ChatService;
+import com.example.ragpoc.cid.service.CidService;
 import com.example.ragpoc.ingestion.chunk.DocumentChunker;
 import com.example.ragpoc.ingestion.chunk.HfTokenCounter;
 import com.example.ragpoc.ingestion.chunk.TextCleaner;
@@ -20,13 +22,14 @@ import com.example.ragpoc.retrieval.service.RetrievalService;
 import io.qdrant.client.QdrantClient;
 import io.qdrant.client.QdrantGrpcClient;
 import java.nio.file.Path;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.ai.transformers.TransformersEmbeddingModel;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.qdrant.QdrantVectorStore;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -217,5 +220,30 @@ public class AppConfiguration {
       RagProperties properties) {
     return new RetrievalService(
         search, reranker, inputGuard, relevanceGate, contextAssembler, audit, properties);
+  }
+
+  // --- chat -----------------------------------------------------------------
+
+  /**
+   * The provider-neutral chat seam.
+   *
+   * <p>Which model this talks to is decided by {@code spring.ai.model.chat} and
+   * the starter on the classpath; no application code names a provider. It is
+   * lazy so a deployment without an API key still starts, and the failure is
+   * reported on the first question instead of at boot.
+   */
+  @Bean
+  @Lazy
+  public ChatClient chatClient(ChatClient.Builder builder) {
+    return builder.build();
+  }
+
+  @Bean
+  @Lazy
+  public ChatService chatService(
+      ObjectProvider<RetrievalService> retrievalService,
+      ObjectProvider<ChatClient> chatClient,
+      CidService cids) {
+    return new ChatService(retrievalService, chatClient, cids);
   }
 }

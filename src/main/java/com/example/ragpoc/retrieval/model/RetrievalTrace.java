@@ -25,6 +25,7 @@ public record RetrievalTrace(
     long embedMillis,
     long searchMillis,
     long rerankMillis,
+    long assembleMillis,
     List<CandidateTrace> candidates,
     List<Citation> citations) {
 

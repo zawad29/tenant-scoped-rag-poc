@@ -6,15 +6,27 @@ Qdrant · Apache Tika · local ONNX · Java 21.
 
 ## State
 
-`./mvnw verify` is green: 69 unit tests + 20 integration tests (Testcontainers
+`./mvnw verify` is green: 76 unit tests + 23 integration tests (Testcontainers
 PostgreSQL + Qdrant). ONNX-dependent tests are skipped when `models/` is absent.
 
-The pipeline was refactored onto Spring AI and the reranker decomposed into
-provider-neutral pieces, then the page concept was removed from ingestion and
-retrieval. `docs/pipeline.md` describes the result and `docs/decisions.md` records
-R1–R16 (R11–R16 are these two refactors).
+Chat generation is built (R17–R19). `ChatService` retrieves first, and only when
+the relevance gate allows it streams a grounded answer from DeepSeek through
+Spring AI's provider-neutral `ChatClient`. `/chat` streams over SSE and shows the
+retrieval panel with per-stage timings. There is still no chat memory.
+`docs/pipeline.md` describes the result and `docs/decisions.md` records R1–R19.
 
 ## What changed
+
+- **Chat generation.** `chat/` now holds `ChatService` (retrieve → generate),
+  `ChatPrompts` (the grounded prompt), `ChatEvent`/`ChatTimings`, and the SSE
+  controller. Retrieval still decides whether the model is called; a refusal is
+  fixed wording and costs no tokens. `POST /chat/stream` is the interactive path,
+  `POST /chat` the no-JavaScript fallback, both rendering `chat/panel.jte`.
+- **DeepSeek via `spring-ai-starter-model-deepseek`**, selected by
+  `spring.ai.model.chat=deepseek`. The code names no provider; a different
+  starter plus that property is the whole swap.
+- **The retrieval panel reports timings.** `RetrievalTrace.assembleMillis` was
+  added, and generation timings live in `ChatTimings`.
 
 - **Spring AI owns the plumbing.** `spring-ai-qdrant-store` replaced the
   hand-written Qdrant store; `spring-ai-tika-document-reader` replaced the PDFBox
@@ -46,7 +58,7 @@ R1–R16 (R11–R16 are these two refactors).
 
 ## Not built
 
-- Chat generation. `/chat` is a retrieval console; the reply area is disabled.
+- Chat memory: no session or `chat_message` rows, and no history in the prompt.
 - Evaluation harness / threshold calibration.
 - Row-level security.
 - Seed data (the `V2__demo_data.sql` migration is the only seed).
@@ -64,8 +76,23 @@ docker compose up -d            # Postgres (5433) + Qdrant (6333/6334)
 beans are `@Lazy`, so the app starts without the models; a missing model surfaces
 on the first ingest or question.
 
+Chat needs a DeepSeek key: put `DEEPSEEK_API_KEY=sk-...` in `.env` (Spring
+imports `.env` itself, so `source`ing it is not required for this one). Leave the
+line commented out when there is no key — see the trap below.
+
 ## Traps already solved
 
+- **An empty `DEEPSEEK_API_KEY` stops startup.** `application.yml` imports `.env`
+  (`spring.config.import`) and defaults the key to `not-configured`, but an empty
+  *present* value overrides the default, so `DeepSeekChatModel` fails with
+  "DeepSeek API key must be set". Keep the line commented out when there is no
+  key; do not export it empty.
+- **Boot 4 auto-configures Jackson 3, not Jackson 2.** The `ObjectMapper` bean is
+  `tools.jackson.databind.ObjectMapper`. Jackson 2 (`com.fasterxml...`) is on the
+  classpath transitively and has no bean, so injecting it fails with a confusing
+  `NoSuchBeanDefinitionException`.
+- **JTE 3.2.4 has no `render(name, params)` that returns a `String`.** Rendering
+  a partial programmatically needs a `gg.jte.output.StringOutput` sink.
 - **Testcontainers Ryuk** cannot connect in this Docker setup; run integration
   tests with `TESTCONTAINERS_RYUK_DISABLED=true`.
 - **Stale `target/` resources.** An old build leaves migration files behind

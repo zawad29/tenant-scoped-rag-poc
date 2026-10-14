@@ -20,4 +20,12 @@ public final class AssistantMessages {
 
   public static final String GENERIC_ERROR =
       "Something went wrong while answering that question. Please try again.";
+
+  /**
+   * No chat provider is configured (no starter active, no reachable model). The
+   * key is named because that is the usual cause.
+   */
+  public static final String CHAT_UNAVAILABLE =
+      "Chat is not configured, so this question was not sent to a model. "
+          + "Set DEEPSEEK_API_KEY and restart the application.";
 }

@@ -46,6 +46,21 @@ public final class ViewFormat {
     return String.format(java.util.Locale.ROOT, "%.2f", value);
   }
 
+  /** Formats a millisecond duration. */
+  public static String ms(long value) {
+    return value + " ms";
+  }
+
+  /** Formats a millisecond duration that may not have been measured. */
+  public static String msOrDash(long value) {
+    return value > 0 ? value + " ms" : "—";
+  }
+
+  /** Formats a score, or a dash when there is none (for example -Infinity). */
+  public static String finiteScore(double value) {
+    return Double.isFinite(value) ? score(value) : "—";
+  }
+
   /** Renders an identifier for a URL; JTE writes only Strings. */
   public static String id(java.util.UUID value) {
     return value == null ? "" : value.toString();
