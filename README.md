@@ -16,6 +16,7 @@ answer.
 | Chat model | Spring AI `ChatClient` over DeepSeek (`deepseek-chat`), streamed to the browser as server-sent events |
 | Document parsing | Apache Tika via Spring AI's `TikaDocumentReader` |
 | Views | JTE server-side templates |
+| UI | Tailwind CSS (Play CDN) + htmx: a shared sidebar layout, boosted navigation, and native `<details>` for the collapsible retrieval list |
 | Boilerplate | Lombok (`@Slf4j` for logging) |
 
 ## Module layout
@@ -43,8 +44,13 @@ com.example.ragpoc
 ├── storage/      Local file storage, keyed by cid
 ├── security/     Login, principal, cid argument resolver
 ├── config/       Properties and bean wiring
-└── web/          Shared view formatting and exception handling
+└── web/          Shared view formatting, ShellModel (layout attributes),
+                  exception handling
 ```
+
+Templates live in `src/main/jte`: `layout/app.jte` is the sidebar shell every
+authenticated page calls, and `chat/panel.jte` + `chat/timings.jte` are
+fragments (rendered to strings for the SSE stream and included by the pages).
 
 ## Setup
 
@@ -156,4 +162,7 @@ Ingestion runs synchronously on the upload request, so the cid is passed
   rows are written. Spec §13 is the next step.
 - **Chat needs a DeepSeek key.** `DEEPSEEK_API_KEY` must be set for answers; the
   rest of the app runs without it.
+- **Tailwind comes from the Play CDN**, so the browser needs internet for
+  styling. The server is unaffected. Compiling Tailwind instead is a `<link>`
+  change plus a build step.
 - **No row-level security** yet; isolation is enforced in the application layer.

@@ -150,7 +150,7 @@ class ChatControllerIT extends IntegrationTestSupport {
                 new ChatEvent.Retrieved(outcome, 30),
                 new ChatEvent.Delta("Eighteen "),
                 new ChatEvent.Delta("days. [S1]"),
-                new ChatEvent.Completed(outcome, new ChatTimings(30, 120, 900, 960, false))));
+                new ChatEvent.Completed(new ChatTimings(30, 120, 900, 960, false))));
 
     MvcResult started =
         mockMvc
@@ -169,13 +169,15 @@ class ChatControllerIT extends IntegrationTestSupport {
     assertThat(body)
         .contains("event:panel")
         .contains("event:delta")
+        .contains("event:timings")
         .contains("Eighteen ")
         .contains("days. [S1]")
-        // The panel is redrawn once the generation timings are known.
+        // Generation timings arrive on their own, so the panel is not rebuilt.
         .contains("First token")
         .contains("Answerable");
-    // Exactly two panel frames: one after retrieval, one on completion.
-    assertThat(body.split("event:panel", -1)).hasSize(3);
+    // Exactly one panel frame and one timings frame.
+    assertThat(body.split("event:panel", -1)).hasSize(2);
+    assertThat(body.split("event:timings", -1)).hasSize(2);
   }
 
   @Test
@@ -206,7 +208,7 @@ class ChatControllerIT extends IntegrationTestSupport {
             Flux.just(
                 new ChatEvent.Retrieved(outcome, 30),
                 new ChatEvent.Delta("ok"),
-                new ChatEvent.Completed(outcome, new ChatTimings(30, 5, 40, 75, false))));
+                new ChatEvent.Completed(new ChatTimings(30, 5, 40, 75, false))));
 
     List<String> events =
         controller
@@ -218,7 +220,7 @@ class ChatControllerIT extends IntegrationTestSupport {
     assertThat(events).isNotNull().hasSize(3);
     assertThat(events.get(0)).startsWith("panel:").contains("Stage timings").contains("streaming").doesNotContain("First token");
     assertThat(events.get(1)).startsWith("delta:").contains("ok");
-    assertThat(events.get(2)).startsWith("panel:").contains("First token");
+    assertThat(events.get(2)).startsWith("timings:").contains("First token");
   }
 
   // --- fixtures -------------------------------------------------------------

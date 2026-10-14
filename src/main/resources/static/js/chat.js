@@ -3,62 +3,87 @@
  *
  * The form still POSTs to /chat without this file. When it runs, the question
  * goes to /chat/stream and what arrives is applied as it comes: the retrieval
- * panel as an HTML fragment, the answer one delta at a time.
+ * panel as an HTML fragment, the answer one delta at a time, the generation
+ * timings as a narrower fragment that leaves the panel's open sections alone.
  *
  * EventSource is not used because it can only issue GETs, and both the question
  * and the CSRF token belong in a request body. The server-sent-event frames are
  * therefore parsed from fetch's response stream, which is the whole reason this
  * file exists.
+ *
+ * The submit handler is delegated from the document because htmx's boosted
+ * navigation replaces the page body; listeners bound to the form itself would be
+ * thrown away with it.
  */
 (function () {
   "use strict";
 
-  var form = document.getElementById("chat-form");
-  var conversation = document.getElementById("conversation");
-  var panel = document.getElementById("retrieval-panel");
-
-  if (!form || !conversation || !panel || !window.fetch || !window.TextDecoder) {
+  if (!window.fetch || !window.TextDecoder) {
     return; // No streaming: leave the plain form submit alone.
   }
 
-  var input = form.querySelector("textarea[name=question]");
-  var button = form.querySelector("button[type=submit]");
-  var streamUrl = form.getAttribute("data-stream-url") || "/chat/stream";
-  var csrfName = form.getAttribute("data-csrf-name");
-  var csrfValue = form.getAttribute("data-csrf-value");
-  var failed = false;
-
-  form.addEventListener("submit", function (event) {
-    event.preventDefault();
-    ask(input.value.trim());
-  });
-
-  function ask(question) {
-    if (!question) {
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form || form.id !== "chat-form") {
       return;
     }
-    failed = false;
+    event.preventDefault();
+    ask(form);
+  });
+
+  function ask(form) {
+    var conversation = document.getElementById("conversation");
+    var panel = document.getElementById("retrieval-panel");
+    var input = form.querySelector("textarea[name=question]");
+    var button = form.querySelector("button[type=submit]");
+    var question = input ? input.value.trim() : "";
+
+    if (!conversation || !panel || !question) {
+      return;
+    }
 
     var empty = conversation.querySelector(".empty-conversation");
     if (empty) {
       empty.remove();
     }
     input.value = "";
-    button.disabled = true;
+    if (button) {
+      button.disabled = true;
+    }
 
-    appendBubble("user", question);
-    var bubble = appendBubble("assistant", "");
-    var answer = bubble.querySelector(".answer");
-    var pending = document.createElement("div");
-    pending.className = "muted small pending";
-    pending.textContent = "Searching your documents…";
-    bubble.insertBefore(pending, answer);
-    scrollToLatest();
+    appendBubble(conversation, "tpl-user-bubble", question);
+    var bubble = appendBubble(conversation, "tpl-assistant-bubble", null);
+    var answer = bubble.querySelector("[data-role=answer]");
+    var pending = bubble.querySelector("[data-role=pending]");
+    scrollTo(bubble);
 
-    send(question)
+    var failed = false;
+    function fail(message) {
+      if (failed) {
+        return;
+      }
+      failed = true;
+      remove(pending);
+      bubble.classList.remove("streaming-cursor");
+      var alert = document.createElement("div");
+      alert.className = "mt-2 mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800";
+      alert.textContent = message;
+      bubble.appendChild(alert);
+
+      var timings = panel.querySelector("#generation-timings");
+      if (timings) {
+        timings.textContent = "No answer was generated.";
+      }
+      var notice = document.createElement("div");
+      notice.className = "mt-2 mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800";
+      notice.textContent = message;
+      panel.insertBefore(notice, panel.firstChild);
+    }
+
+    send(form, question)
       .then(function (response) {
         if (response.redirected) {
-          throw new Error("session");
+          throw new Error("session"); // The request landed on /login.
         }
         if (!response.ok || !response.body) {
           throw new Error("http");
@@ -66,21 +91,27 @@
         return read(response.body.getReader(), {
           panel: function (data) {
             panel.innerHTML = data.html;
+            scrollTo(bubble);
           },
           delta: function (data) {
             remove(pending);
+            bubble.classList.add("streaming-cursor");
             answer.appendChild(document.createTextNode(data.text));
-            scrollToLatest();
+            scrollTo(bubble);
+          },
+          timings: function (data) {
+            var target = document.getElementById("generation-timings");
+            if (target) {
+              target.innerHTML = data.html;
+            }
           },
           error: function (data) {
-            reportFailure(bubble, data.message);
+            fail(data.message);
           }
         });
       })
       .catch(function (error) {
-        // A redirect means the session expired and the request landed on /login.
-        reportFailure(
-          bubble,
+        fail(
           error && error.message === "session"
             ? "Your session expired. Reload the page and sign in again."
             : "The answer could not be streamed. Please try again."
@@ -88,19 +119,27 @@
       })
       .then(function () {
         remove(pending);
-        bubble.classList.remove("streaming");
-        button.disabled = false;
-        input.focus();
+        bubble.classList.remove("streaming-cursor");
+        if (button) {
+          button.disabled = false;
+        }
+        if (input) {
+          input.focus();
+        }
       });
   }
 
-  function send(question) {
+  function send(form, question) {
     var body = new URLSearchParams();
     body.set("question", question);
+
+    var csrfName = form.getAttribute("data-csrf-name");
+    var csrfValue = form.getAttribute("data-csrf-value");
     if (csrfName && csrfValue) {
       body.set(csrfName, csrfValue);
     }
-    return fetch(streamUrl, {
+
+    return fetch(form.getAttribute("data-stream-url") || "/chat/stream", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -163,41 +202,20 @@
 
   /* --- dom --------------------------------------------------------------- */
 
-  function appendBubble(kind, text) {
-    var bubble = document.createElement("div");
-    bubble.className = "bubble " + kind;
-    if (kind === "assistant") {
-      bubble.classList.add("streaming");
+  function appendBubble(conversation, templateId, text) {
+    var template = document.getElementById(templateId);
+    var bubble = template
+      ? template.content.firstElementChild.cloneNode(true)
+      : document.createElement("div");
+
+    if (text !== null) {
+      var answer = bubble.querySelector("[data-role=answer]");
+      if (answer) {
+        answer.textContent = text;
+      }
     }
-    var span = document.createElement("span");
-    span.className = "answer";
-    span.textContent = text;
-    bubble.appendChild(span);
     conversation.appendChild(bubble);
     return bubble;
-  }
-
-  function reportFailure(bubble, message) {
-    if (failed) {
-      return;
-    }
-    failed = true;
-    remove(bubble.querySelector(".pending"));
-    bubble.classList.remove("streaming");
-    var alert = document.createElement("div");
-    alert.className = "alert";
-    alert.textContent = message;
-    bubble.appendChild(alert);
-
-    var status = panel.querySelector(".generation-status");
-    if (status) {
-      status.textContent = "not generated";
-      status.classList.remove("muted");
-    }
-    var notice = document.createElement("p");
-    notice.className = "alert";
-    notice.textContent = message;
-    panel.insertBefore(notice, panel.firstChild);
   }
 
   function remove(element) {
@@ -206,7 +224,9 @@
     }
   }
 
-  function scrollToLatest() {
-    conversation.scrollTop = conversation.scrollHeight;
+  function scrollTo(element) {
+    if (element && element.scrollIntoView) {
+      element.scrollIntoView({ block: "nearest" });
+    }
   }
 })();

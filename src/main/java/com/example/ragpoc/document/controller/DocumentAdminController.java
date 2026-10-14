@@ -1,10 +1,11 @@
 package com.example.ragpoc.document.controller;
 
 import com.example.ragpoc.cid.CidContext;
-import com.example.ragpoc.cid.service.CidService;
 import com.example.ragpoc.document.DocumentSummary;
 import com.example.ragpoc.document.service.DocumentService;
 import com.example.ragpoc.ingestion.IngestionValidationException;
+import com.example.ragpoc.security.AppUserPrincipal;
+import com.example.ragpoc.web.ShellModel;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -12,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -35,32 +37,35 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 public class DocumentAdminController {
 
   private final DocumentService documents;
-  private final CidService cids;
+  private final ShellModel shell;
 
-  public DocumentAdminController(DocumentService documents, CidService cids) {
+  public DocumentAdminController(DocumentService documents, ShellModel shell) {
     this.documents = documents;
-    this.cids = cids;
+    this.shell = shell;
   }
 
   @GetMapping("/admin/documents")
   public String page(
       CidContext cid,
+      @AuthenticationPrincipal AppUserPrincipal principal,
       CsrfToken csrfToken,
       @ModelAttribute("message") String message,
       @ModelAttribute("error") String error,
       Model model) {
-    populate(cid, csrfToken, model);
+    populate(cid, principal, csrfToken, model);
     model.addAttribute("message", message);
     model.addAttribute("error", error);
     return "admin/documents";
   }
 
-  private void populate(CidContext cid, CsrfToken csrfToken, Model model) {
+  private void populate(
+      CidContext cid,
+      AppUserPrincipal principal,
+      CsrfToken csrfToken,
+      Model model) {
     List<DocumentSummary> rows = documents.list(cid);
-    model.addAttribute("cidName", cids.require(cid.cidId()).getName());
+    shell.add(model, cid, principal, csrfToken, "documents");
     model.addAttribute("rows", rows);
-    model.addAttribute("csrfToken", csrfToken.getToken());
-    model.addAttribute("csrfParameterName", csrfToken.getParameterName());
   }
 
   @PostMapping("/admin/documents")

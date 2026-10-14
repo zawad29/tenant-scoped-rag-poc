@@ -222,3 +222,35 @@ the previous turn. This is deliberate for the PoC stage and is the next step
 stages separately; generation timing lives in `ChatTimings`
 (`firstTokenMillis`, `generationMillis`, `totalMillis`). A slow answer can then
 be attributed to a stage rather than guessed at.
+
+---
+
+# R20 — The UI is Tailwind + htmx behind one server-rendered shell
+
+The pages were nine hand-written templates with a duplicated `<header>` and a
+hand-written stylesheet each. They now share `layout/app.jte`: a sidebar
+(Home / Chat / Documents / Users / Organisation), a back button, the signed-in
+user and the CSRF token. Each page supplies only its body through a JTE content
+block, and `web/ShellModel` fills the shell attributes in one place so a new page
+cannot forget the CSRF token or show another cid's name.
+
+- **Tailwind through the Play CDN.** No build step and no generated stylesheet in
+  the repository; `app.css` and `admin.css` are deleted. The cost is that the
+  browser needs internet for styling and the CDN only emits classes it has seen,
+  which is why the dynamic classes `chat.js` applies are listed on a hidden node
+  in the layout. Compiling Tailwind instead is a `<link>` change plus a build
+  step, not a redesign.
+- **htmx for navigation and partial updates.** Sidebar links are `hx-boost`ed, so
+  navigation swaps the body instead of reloading; the documents table refreshes
+  through `hx-get` + `hx-select="#documents-table"`. Forms stay ordinary POSTs:
+  they already redirect to a fresh page, and boosting a multipart upload or the
+  logout form buys nothing but new failure modes.
+- **The streamed answer keeps its small `fetch` parser.** htmx's SSE extension
+  only issues GETs, and the question plus the CSRF token belong in a body, so
+  `static/js/chat.js` still reads the response stream. Because boosted navigation
+  replaces the body, its submit handler is delegated from `document`.
+- **The retrieval panel is a nested `<details>` list** rather than a table: a
+  selected-context group and a candidates group, each row expanding to its text
+  or its drop reason. No JavaScript is involved. Generation timings therefore
+  arrive as a separate `timings` fragment rather than by re-rendering the panel,
+  which also preserves whichever rows the user had expanded.

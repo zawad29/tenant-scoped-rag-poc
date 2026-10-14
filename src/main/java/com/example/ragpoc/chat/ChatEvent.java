@@ -23,11 +23,11 @@ public sealed interface ChatEvent {
   record Delta(String text) implements ChatEvent {}
 
   /**
-   * The answer is complete. It carries the outcome again so the panel can be
-   * redrawn with the generation timings next to the retrieval ones, without the
-   * controller having to remember state between events.
+   * The answer is complete. It carries only the timings: the panel already sent
+   * the retrieval result and is not rebuilt, so the collapsible sections the user
+   * opened stay open.
    */
-  record Completed(RetrievalOutcome outcome, ChatTimings timings) implements ChatEvent {}
+  record Completed(ChatTimings timings) implements ChatEvent {}
 
   /** No answer will follow; the message is safe to show to the user. */
   record Failed(String message) implements ChatEvent {}

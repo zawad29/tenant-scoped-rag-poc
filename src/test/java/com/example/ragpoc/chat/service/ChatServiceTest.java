@@ -85,7 +85,6 @@ class ChatServiceTest {
     assertThat(events.get(2)).isEqualTo(new ChatEvent.Delta("days. [S1]"));
 
     ChatEvent.Completed completed = (ChatEvent.Completed) events.get(3);
-    assertThat(completed.outcome()).isSameAs(outcome);
     assertThat(completed.timings().refused()).isFalse();
     assertThat(completed.timings().totalMillis()).isGreaterThanOrEqualTo(0);
     assertThat(completed.timings().generationMillis()).isGreaterThanOrEqualTo(0);

@@ -4,9 +4,9 @@ import com.example.ragpoc.chat.ChatEvent;
 import com.example.ragpoc.chat.ChatTimings;
 import com.example.ragpoc.chat.service.ChatService;
 import com.example.ragpoc.cid.CidContext;
-import com.example.ragpoc.cid.service.CidService;
 import com.example.ragpoc.retrieval.model.RetrievalOutcome;
-import com.example.ragpoc.user.entity.Role;
+import com.example.ragpoc.security.AppUserPrincipal;
+import com.example.ragpoc.web.ShellModel;
 import gg.jte.TemplateEngine;
 import gg.jte.output.StringOutput;
 import java.util.HashMap;
@@ -14,6 +14,7 @@ import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -39,29 +40,35 @@ import tools.jackson.databind.ObjectMapper;
  * </ul>
  *
  * <p>The retrieval panel is rendered by JTE in both paths and travels as an HTML
- * fragment inside a JSON-encoded event, which keeps the panel markup in one
- * template and the browser script to appending rather than building DOM.
+ * fragment inside a JSON-encoded event. Generation timings arrive as a second,
+ * narrower fragment so the panel's collapsible sections are not rebuilt when the
+ * answer finishes.
  */
 @Controller
 @Slf4j
 public class ChatController {
 
   private final ChatService chat;
-  private final CidService cids;
+  private final ShellModel shell;
   private final TemplateEngine templates;
   private final ObjectMapper json;
 
   public ChatController(
-      ChatService chat, CidService cids, TemplateEngine templates, ObjectMapper json) {
+      ChatService chat, ShellModel shell, TemplateEngine templates, ObjectMapper json) {
     this.chat = chat;
-    this.cids = cids;
+    this.shell = shell;
     this.templates = templates;
     this.json = json;
   }
 
   @GetMapping("/chat")
-  public String chat(CidContext cid, CsrfToken csrfToken, Model model) {
-    populate(cid, csrfToken, model);
+  public String chat(
+      CidContext cid,
+      @AuthenticationPrincipal AppUserPrincipal principal,
+      CsrfToken csrfToken,
+      Model model) {
+
+    shell.add(model, cid, principal, csrfToken, "chat");
     model.addAttribute("question", null);
     model.addAttribute("outcome", null);
     model.addAttribute("retrievalMillis", 0L);
@@ -74,11 +81,12 @@ public class ChatController {
   @PostMapping("/chat")
   public String ask(
       CidContext cid,
+      @AuthenticationPrincipal AppUserPrincipal principal,
       @RequestParam("question") String question,
       CsrfToken csrfToken,
       Model model) {
 
-    populate(cid, csrfToken, model);
+    shell.add(model, cid, principal, csrfToken, "chat");
     model.addAttribute("question", question);
 
     try {
@@ -117,16 +125,9 @@ public class ChatController {
   private ServerSentEvent<String> toEvent(ChatEvent event) {
     return switch (event) {
       case ChatEvent.Retrieved retrieved ->
-          ssEvent("panel", Map.of("html", renderPanel(retrieved.outcome(), retrieved.retrievalMillis(), null)));
+          fragment("panel", renderPanel(retrieved.outcome(), retrieved.retrievalMillis(), null));
       case ChatEvent.Completed completed ->
-          ssEvent(
-              "panel",
-              Map.of(
-                  "html",
-                  renderPanel(
-                      completed.outcome(),
-                      completed.timings().retrievalMillis(),
-                      completed.timings())));
+          fragment("timings", renderTimings(completed.timings()));
       case ChatEvent.Delta delta -> ssEvent("delta", Map.of("text", delta.text()));
       case ChatEvent.Failed failed -> ssEvent("error", Map.of("message", failed.message()));
     };
@@ -138,9 +139,21 @@ public class ChatController {
     params.put("outcome", outcome);
     params.put("retrievalMillis", retrievalMillis);
     params.put("timings", timings);
+    return render("chat/panel.jte", params);
+  }
+
+  private String renderTimings(ChatTimings timings) {
+    return render("chat/timings.jte", Map.of("timings", timings));
+  }
+
+  private String render(String template, Map<String, Object> params) {
     StringOutput output = new StringOutput();
-    templates.render("chat/panel.jte", params, output);
+    templates.render(template, params, output);
     return output.toString();
+  }
+
+  private ServerSentEvent<String> fragment(String name, String html) {
+    return ssEvent(name, Map.of("html", html));
   }
 
   /**
@@ -156,12 +169,5 @@ public class ChatController {
       data = "{\"message\":\"The answer could not be rendered.\"}";
     }
     return ServerSentEvent.<String>builder().event(name).data(data).build();
-  }
-
-  private void populate(CidContext cid, CsrfToken csrfToken, Model model) {
-    model.addAttribute("cidName", cids.require(cid.cidId()).getName());
-    model.addAttribute("isCidAdmin", cid.role() == Role.CID_ADMIN);
-    model.addAttribute("csrfToken", csrfToken.getToken());
-    model.addAttribute("csrfParameterName", csrfToken.getParameterName());
   }
 }

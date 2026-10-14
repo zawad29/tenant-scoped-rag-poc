@@ -321,13 +321,16 @@ newline would end an SSE data field early.
 
 | Event | Payload | Meaning |
 |---|---|---|
-| `panel` | `{"html": …}` | the retrieval panel; sent after retrieval, and again on completion with the generation timings |
+| `panel` | `{"html": …}` | the retrieval panel, sent once after retrieval |
 | `delta` | `{"text": …}` | the next slice of the answer |
+| `timings` | `{"html": …}` | the generation timings, rendered from `chat/timings.jte` into `#generation-timings` |
 | `error` | `{"message": …}` | no answer will follow; the message is user-safe |
 
 The panel HTML is rendered by JTE (`chat/panel.jte`) on both paths, so the markup
-has one definition. The browser script (`static/js/chat.js`) only replaces the
-panel's `innerHTML` and appends delta text.
+has one definition. The browser script (`static/js/chat.js`) replaces the panel's
+`innerHTML`, appends delta text and swaps only the timings block on completion.
+Timings are kept in their own event on purpose: the panel is a nested
+`<details>` list, and re-rendering it would collapse whatever the user opened.
 
 ### 5.2 Two paths, one feature
 
@@ -510,5 +513,5 @@ chat done cid=… retrievalMillis=… generationMillis=… answerChars=…
 
 ---
 
-*Rationale: `docs/decisions.md` (R1–R18). Behaviour: the `ingestion/**`,
+*Rationale: `docs/decisions.md` (R1–R20). Behaviour: the `ingestion/**`,
 `retrieval/**` and `chat/**` classes referenced above.*

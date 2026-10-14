@@ -13,15 +13,27 @@ Chat generation is built (R17–R19). `ChatService` retrieves first, and only wh
 the relevance gate allows it streams a grounded answer from DeepSeek through
 Spring AI's provider-neutral `ChatClient`. `/chat` streams over SSE and shows the
 retrieval panel with per-stage timings. There is still no chat memory.
-`docs/pipeline.md` describes the result and `docs/decisions.md` records R1–R19.
+`docs/pipeline.md` describes the result and `docs/decisions.md` records R1–R20.
 
 ## What changed
 
+- **UI redesign (R20).** Every authenticated page now renders inside one shell,
+  `src/main/jte/layout/app.jte`: a sidebar (Home / Chat / Documents / Users /
+  Organisation), a back button, and the signed-in user. Styling is Tailwind
+  utility classes loaded from the Play CDN; `app.css` and `admin.css` are gone.
+  htmx boosts sidebar navigation and drives a partial refresh of the documents
+  table (`hx-get` + `hx-select`). The retrieval panel is a nested collapsible
+  list of `<details>` elements (selected context, then every candidate), each
+  expanding to its content. The shell attributes are added in one place,
+  `web/ShellModel`.
 - **Chat generation.** `chat/` now holds `ChatService` (retrieve → generate),
   `ChatPrompts` (the grounded prompt), `ChatEvent`/`ChatTimings`, and the SSE
   controller. Retrieval still decides whether the model is called; a refusal is
   fixed wording and costs no tokens. `POST /chat/stream` is the interactive path,
   `POST /chat` the no-JavaScript fallback, both rendering `chat/panel.jte`.
+- **Generation timings are a separate SSE frame** (`timings`, from
+  `chat/timings.jte`), so the panel's collapsed/expanded state survives the end
+  of a stream instead of being rebuilt.
 - **DeepSeek via `spring-ai-starter-model-deepseek`**, selected by
   `spring.ai.model.chat=deepseek`. The code names no provider; a different
   starter plus that property is the whole swap.
@@ -82,6 +94,18 @@ line commented out when there is no key — see the trap below.
 
 ## Traps already solved
 
+- **The Tailwind Play CDN needs internet in the browser**, and only emits classes
+  it has seen. `chat.js` creates elements after load and `layout/app.jte` carries
+  a hidden node listing those classes, so the CDN has them. Without the CDN the
+  app still works, just unstyled.
+- **htmx boosted navigation replaces the body**, so `chat.js` binds its submit
+  handler on `document` (delegated) rather than on the form, and re-queries the
+  conversation, panel and form on each submit. A listener bound at load would be
+  discarded with the old body.
+- **JTE layouts use a content block.** The shell takes `gg.jte.Content content`
+  and each page passes a backtick-delimited content block as its `content`
+  argument. Cross-template calls resolve dots to slashes (`@template.chat.panel`
+  → `chat/panel.jte`).
 - **An empty `DEEPSEEK_API_KEY` stops startup.** `application.yml` imports `.env`
   (`spring.config.import`) and defaults the key to `not-configured`, but an empty
   *present* value overrides the default, so `DeepSeekChatModel` fails with

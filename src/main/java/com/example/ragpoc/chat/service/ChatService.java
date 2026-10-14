@@ -113,7 +113,7 @@ public class ChatService {
           new ChatEvent.Retrieved(outcome, retrievalMillis),
           new ChatEvent.Delta(outcome.refusalMessage()),
           new ChatEvent.Completed(
-              outcome, new ChatTimings(retrievalMillis, 0, 0, elapsed(start), true)));
+              new ChatTimings(retrievalMillis, 0, 0, elapsed(start), true)));
     }
 
     ChatClient client = chatClientOrNull();
@@ -145,7 +145,6 @@ public class ChatService {
             () ->
                 Flux.just(
                     new ChatEvent.Completed(
-                        outcome,
                         new ChatTimings(
                             retrievalMillis,
                             firstTokenMillis.get(),
